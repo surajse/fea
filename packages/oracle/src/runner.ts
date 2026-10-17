@@ -1,6 +1,7 @@
 import { runCommand } from "@fea/sandbox";
 import type { Vector } from "@fea/spec";
 import { applyNormalizers, defaultNormalizers, type Normalizer } from "./normalize.js";
+import { normalizersFor } from "./packs.js";
 
 export interface FailingVector {
   vectorId: string;
@@ -34,6 +35,8 @@ export interface ParityOptions {
   seed?: string;
   reportId?: string;
   normalizers?: Normalizer[];
+  /** named normalizer packs, additive on top of `normalizers` */
+  packs?: string[];
 }
 
 /**
@@ -43,7 +46,8 @@ export interface ParityOptions {
  * says exactly what was compared.
  */
 export async function runParity(opts: ParityOptions): Promise<ParityReport> {
-  const normalizers = opts.normalizers ?? defaultNormalizers;
+  const base = opts.normalizers ?? defaultNormalizers;
+  const normalizers = [...normalizersFor(opts.packs ?? []), ...base];
   let passed = 0;
   let failed = 0;
   let weightPassed = 0;

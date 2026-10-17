@@ -1,5 +1,5 @@
 {
-  "description": "Allow/ask/deny policy engine for FEA tools.",
+  "description": "Allow/ask/deny policy engine for FEA tools",
   "exports": {
     ".": "./dist/src/index.js"
   },
@@ -12,6 +12,23 @@
     "test": "vitest run"
   },
   "types": "./dist/src/index.d.ts",
-  "version": "0.3.0",
-  "type": "module"
+  "version": "0.4.0",
+  "type": "module",
+  "author": "surajse",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surajse/fea.git"
+  },
+  "homepage": "https://github.com/surajse/fea#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "reverse-engineering",
+    "clean-room",
+    "testing",
+    "ai-agents"
+  ],
+  "files": [
+    "dist"
+  ]
 }

@@ -31,7 +31,7 @@ verifyParity  → ParityReport { score, failingVectors }
 exportPack    → pack/ (spec + report + provenance + manifest w/ sha256)
 ```
 
-## The reader adapter (v0.2)
+## The reader adapter (v0.2) and persistent sessions (v0.4)
 
 ```
 REA MCP server ──MCP──▶ ReaReader ──▶ fea_read ──▶ ReaderNotes (store/notes/)
@@ -45,6 +45,27 @@ unchanged: `createSynthesisContext` only projects the spec's behavioral
 fields. Reader notes reach a spec as *evidence references*, never as content
 — a synthesis agent can see "surface X was confirmed by rea_list_exports",
 never decompiled code.
+
+v0.4 adds the persistent session proxy for document-stateful readers:
+
+```
+┌─ fea reader serve ─────────────────────────┐
+│  ONE ReaReader (rea mcp stdio)              │
+│  loopback HTTP 127.0.0.1:3210 + token      │◀── fea read --proxy-url … (any number of calls,
+│  POST /call {tool, args}                    │     same REA document session)
+└────────────────────────────────────────────┘
+```
+
+Without the proxy, each `fea read` spawns a fresh `rea mcp` process, so
+`open_binary` in one call is invisible to the next. With it, the whole
+`open_binary → list_strings → …` workflow shares one session.
+
+## Normalizer packs (v0.4)
+
+`@fea/oracle` ships named packs (`http`, `log`, `path`, `ids`) for common
+non-behavioral noise. Packs are additive on the default normalizers and
+every applied normalizer is listed in the parity report — if a pack hides a
+real difference, the report shows exactly which pattern did it.
 
 ## Policy gate (v0.3)
 

@@ -52,7 +52,7 @@ const program = new Command();
 program
   .name("fea")
   .description("Forward Engineer Anything — verified reimplementation loop")
-  .version("0.3.0")
+  .version("0.4.0")
   .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"))
   .option("--policy <file>", "policy file (allow/ask/deny per tool)");
 
@@ -60,17 +60,17 @@ program
   .command("ingest")
   .description("Register a target you are authorized to analyze")
   .argument("<pathOrUrl>", "absolute path to a CLI/native binary, or base URL of an HTTP API")
-  .option("--kind <kind>", "cli | http-api | native", "cli")
+  .option("--kind <kind>", "cli | http-api | native | apk", "cli")
   .option("--i-have-rights", "confirm you own / are licensed to analyze this target")
   .action((pathOrUrl: string, opts: { kind: string; iHaveRights?: boolean }, cmd) => {
     const g = globals(cmd);
-    if (opts.kind !== "cli" && opts.kind !== "http-api" && opts.kind !== "native") {
-      console.error("--kind must be cli, http-api or native");
+    if (opts.kind !== "cli" && opts.kind !== "http-api" && opts.kind !== "native" && opts.kind !== "apk") {
+      console.error("--kind must be cli, http-api, native or apk");
       process.exit(1);
     }
     print(coreFor({ store: g.store }).ingestTarget({
       pathOrUrl,
-      kind: opts.kind as "cli" | "http-api" | "native",
+      kind: opts.kind as "cli" | "http-api" | "native" | "apk",
       iHaveRights: opts.iHaveRights === true
     }));
   });
@@ -83,10 +83,21 @@ program
   .option("--args <json>", "JSON arguments for the reader tool", "{}")
   .option("--prelude <json>", "JSON array of {tool, args} to run first in the same session")
   .option("--reader-cmd <cmd>", "custom reader stdio command, e.g. 'rea mcp'")
+  .option("--proxy-url <url>", "`fea reader serve` proxy URL (persistent session)")
+  .option("--proxy-token <t>", "bearer token for the reader proxy")
   .option("--yes", "pre-approve if policy says 'ask'")
   .action(
     async (
-      opts: { target: string; tool: string; args: string; prelude?: string; readerCmd?: string; yes?: boolean },
+      opts: {
+        target: string;
+        tool: string;
+        args: string;
+        prelude?: string;
+        readerCmd?: string;
+        proxyUrl?: string;
+        proxyToken?: string;
+        yes?: boolean;
+      },
       cmd
     ) => {
       const g = globals(cmd);
@@ -106,12 +117,35 @@ program
               tool: opts.tool,
               args,
               prelude,
-              readerCommand: opts.readerCmd ? opts.readerCmd.split(" ") : undefined
+              readerCommand: opts.readerCmd ? opts.readerCmd.split(" ") : undefined,
+              readerProxyUrl: opts.proxyUrl,
+              readerToken: opts.proxyToken
             })
         )
       );
     }
   );
+
+const readerCmd = program.command("reader").description("Persistent REA reader sessions");
+
+readerCmd
+  .command("serve")
+  .description("Hold one REA session and share it over loopback HTTP (127.0.0.1 only)")
+  .option("--port <n>", "port to bind", "3210")
+  .option("--reader-cmd <cmd>", "custom reader stdio command, e.g. 'rea mcp'")
+  .option("--token <t>", "bearer token (default: random, printed once)")
+  .action(async (opts: { port: string; readerCmd?: string; token?: string }) => {
+    const { serveReaderProxy } = await import("@fea/readers");
+    const proxy = await serveReaderProxy({
+      port: parseInt(opts.port, 10),
+      token: opts.token,
+      reader: { command: opts.readerCmd ? opts.readerCmd.split(" ") : undefined }
+    });
+    console.log(`reader proxy: ${proxy.url}`);
+    console.log(`token: ${proxy.token}`);
+    console.log("press Ctrl-C to stop");
+    await new Promise(() => {});
+  });
 
 program
   .command("capture")
@@ -188,10 +222,18 @@ program
   .requiredOption("--rebuild <path>", "absolute path to the rebuilt binary")
   .requiredOption("--vectorset <id>", "vector set id")
   .option("--fail-under <n>", "CI mode: exit 1 when score is below n", parseFloat)
+  .option("--packs <list>", "normalizer packs, comma-separated (http,log,path,ids)")
   .option("--yes", "pre-approve if policy says 'ask'")
   .action(
     async (
-      opts: { target: string; rebuild: string; vectorset: string; failUnder?: number; yes?: boolean },
+      opts: {
+        target: string;
+        rebuild: string;
+        vectorset: string;
+        failUnder?: number;
+        packs?: string;
+        yes?: boolean;
+      },
       cmd
     ) => {
       const g = globals(cmd);
@@ -199,7 +241,8 @@ program
         originalTargetId: opts.target,
         rebuildPath: opts.rebuild,
         vectorSetId: opts.vectorset,
-        failUnder: opts.failUnder
+        failUnder: opts.failUnder,
+        packs: opts.packs ? opts.packs.split(",").map((p) => p.trim()).filter(Boolean) : undefined
       };
       const { report, passed } = await gatedCli("fea_verify_parity", input, g, { yes: opts.yes }, () =>
         coreFor({ store: g.store }).verifyParity(input)

@@ -27,7 +27,11 @@ export interface ReaderToolInfo {
  * except as behavior.
  */
 export class ReaReader {
-  private constructor(private client: Client) {}
+  private constructor(
+    private lister: () => Promise<ReaderToolInfo[]>,
+    private caller: (name: string, args: Record<string, unknown>) => Promise<unknown>,
+    private closer: () => Promise<void>
+  ) {}
 
   static async connect(opts: ReaReaderOptions = {}): Promise<ReaReader> {
     let transport: Transport;
@@ -39,18 +43,60 @@ export class ReaReader {
       const [command, ...args] = opts.command ?? ["rea", "mcp"];
       transport = new StdioClientTransport({ command, args });
     }
-    const client = new Client({ name: "fea-rea-reader", version: "0.2.0" });
+    const client = new Client({ name: "fea-rea-reader", version: "0.4.0" });
     await client.connect(transport);
-    return new ReaReader(client);
+    return new ReaReader(
+      async () => {
+        const res = await client.listTools();
+        return res.tools.map((t) => ({ name: t.name, description: t.description }));
+      },
+      (name, args) => client.callTool({ name, arguments: args }),
+      () => client.close()
+    );
+  }
+
+  /**
+   * Connect to a `fea reader serve` proxy (loopback HTTP). The proxy holds
+   * ONE persistent REA session, so document-stateful workflows work across
+   * separate fea_read calls.
+   */
+  static async connectRemote(url: string, token?: string): Promise<ReaReader> {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (token) headers["authorization"] = `Bearer ${token}`;
+    const base = url.replace(/\/$/, "");
+    const get = async <T>(path: string): Promise<T> => {
+      const res = await fetch(base + path, { headers });
+      if (!res.ok) throw new Error(`reader proxy ${path}: HTTP ${res.status}`);
+      return (await res.json()) as T;
+    };
+    // fail fast if the proxy is unreachable or the token is wrong
+    await get<{ ok: boolean }>("/health");
+    return new ReaReader(
+      async () => {
+        const { tools } = await get<{ tools: ReaderToolInfo[] }>("/tools");
+        return tools;
+      },
+      async (name, args) => {
+        const res = await fetch(base + "/call", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ tool: name, args })
+        });
+        if (!res.ok) throw new Error(`reader proxy /call: HTTP ${res.status}`);
+        const data = (await res.json()) as { result?: unknown; error?: string };
+        if (data.error) throw new Error(`reader tool "${name}": ${data.error}`);
+        return data.result;
+      },
+      async () => {}
+    );
   }
 
   async listTools(): Promise<ReaderToolInfo[]> {
-    const res = await this.client.listTools();
-    return res.tools.map((t) => ({ name: t.name, description: t.description }));
+    return this.lister();
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    return this.client.callTool({ name, arguments: args });
+    return this.caller(name, args);
   }
 
   /**
@@ -68,7 +114,7 @@ export class ReaReader {
   }
 
   async close(): Promise<void> {
-    await this.client.close();
+    await this.closer();
   }
 }
 

@@ -17,6 +17,30 @@ ingest → capture → spec → synthesize → verify → export
 
 **Positioning:** FEA does not replace [REA](https://github.com/morluto/rea) — it consumes REA (or any analysis tool) as its *reader*. *REA reads. FEA rebuilds.*
 
+Install (once published): `npm i -g fea-agents` — the `fea` binary. From
+source: `pnpm install && pnpm build`.
+
+## What v0.4 is
+
+Scale & ship. v0.4 adds:
+
+- **Persistent reader sessions** — `fea reader serve` holds ONE REA session
+  and shares it over loopback HTTP (127.0.0.1 + bearer token), so
+  document-stateful workflows (`open_binary` → `list_strings`) work across
+  separate `fea read` calls. Use `--proxy-url` / `--proxy-token` on `fea read`
+  (or `readerProxyUrl` on the MCP tool).
+- **Normalizer packs** — named, auditable noise filters: `http` (RFC1123
+  dates, ETags), `log` (timestamps, pids), `path` (temp/home dirs, ports),
+  `ids` (UUIDs, hex tokens). `fea verify --packs http,log` — additive on
+  the defaults, all listed in the parity report.
+- **`apk` target kind** — APK files fingerprint like native binaries; the
+  actual analysis goes through the REA reader (JADX/apktool on the reader's
+  machine).
+- **npm-publish-ready** — every package has publish metadata, the CLI
+  publishes as `fea-agents` (name verified free; `fea` itself is taken),
+  `npm pack --dry-run` verified. Steps in `docs/PUBLISH.md` — the publish
+  itself needs your `npm login`, so it's yours to run.
+
 ## Quick start
 
 ```bash
@@ -71,11 +95,11 @@ MCP surface is now 13 tools.
 - ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
 - ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
 
-## What's next (v0.4)
+## What's next (v0.5)
 
-APK reader (needs JADX on the machine — honest skip until then), persistent
-reader sessions over SSE (instead of per-call processes), harness normalizer
-packs (HTTP date headers, log timestamps), npm publish of `fea` + `fea-agents`.
+Persistent reader sessions are in; next: SSE transport for the proxy
+(instead of plain HTTP), harness normalizer packs for more ecosystems,
+`fea init` project scaffolding, and the actual npm publish run.
 
 ## Docs
 

@@ -31,7 +31,7 @@ import { generateVectors, runParity, type ParityReport } from "@fea/oracle";
 import { FeaStore } from "./store.js";
 import { dirname } from "node:path";
 
-export const FEA_VERSION = "0.3.0";
+export const FEA_VERSION = "0.4.0";
 
 /** Human-readable summary of a staged tool call (for approval prompts). */
 function describeToolCall(tool: string, args: Record<string, unknown>): string {
@@ -232,13 +232,18 @@ export class FeaCore {
     prelude?: Array<{ tool: string; args?: Record<string, unknown> }>;
     readerCommand?: string[];
     readerUrl?: string;
+    /** `fea reader serve` proxy URL (persistent session); alternative to readerCommand/readerUrl */
+    readerProxyUrl?: string;
+    readerToken?: string;
   }): Promise<ReaderNotes> {
     const target = this.store.load<TargetDescriptor>("targets", input.targetId);
-    const reader = await ReaReader.connect({
-      transport: this.opts.readerTransport,
-      command: input.readerCommand,
-      url: input.readerUrl
-    });
+    const reader = input.readerProxyUrl
+      ? await ReaReader.connectRemote(input.readerProxyUrl, input.readerToken)
+      : await ReaReader.connect({
+          transport: this.opts.readerTransport,
+          command: input.readerCommand,
+          url: input.readerUrl
+        });
     try {
       const prelude: Array<{ tool: string; summary: string }> = [];
       for (const p of input.prelude ?? []) {
@@ -348,6 +353,8 @@ export class FeaCore {
     seed?: string;
     /** CI mode: fail when score is below this threshold */
     failUnder?: number;
+    /** named normalizer packs (http, log, path, ids), additive */
+    packs?: string[];
   }): Promise<{ report: ParityReport; passed: boolean; failUnder?: number }> {
     const target = this.store.load<TargetDescriptor>("targets", input.originalTargetId);
     const set = this.store.load<VectorSet>("vectorsets", input.vectorSetId);
@@ -356,7 +363,8 @@ export class FeaCore {
       rebuild: input.rebuildPath,
       vectors: set.vectors,
       reportId: `rep_${randomUUID().slice(0, 8)}`,
-      seed: input.seed
+      seed: input.seed,
+      packs: input.packs
     });
     this.store.save("reports", report.id, report);
     const passed = input.failUnder === undefined ? true : report.score >= input.failUnder;
@@ -450,6 +458,7 @@ export class FeaCore {
             vectorSetId: string;
             seed?: string;
             failUnder?: number;
+            packs?: string[];
           }
         );
       case "fea_read":
@@ -461,6 +470,8 @@ export class FeaCore {
             prelude?: Array<{ tool: string; args?: Record<string, unknown> }>;
             readerCommand?: string[];
             readerUrl?: string;
+            readerProxyUrl?: string;
+            readerToken?: string;
           }
         );
       default:

@@ -5,7 +5,7 @@ import { PolicyEngine } from "@fea/policy";
 import { FeaCore, FEA_VERSION } from "./core.js";
 import { FeaStore } from "./store.js";
 
-const TargetKindSchema = z.enum(["cli", "http-api", "native"]);
+const TargetKindSchema = z.enum(["cli", "http-api", "native", "apk"]);
 
 const CliPlanSchema = z.object({
   name: z.string().optional(),
@@ -112,7 +112,12 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
         .optional()
         .describe("Tool calls to run first in the same reader session"),
       readerCommand: z.array(z.string()).optional().describe("Custom reader stdio command (default: rea mcp)"),
-      readerUrl: z.string().optional().describe("Reader Streamable-HTTP URL alternative")
+      readerUrl: z.string().optional().describe("Reader Streamable-HTTP URL alternative"),
+      readerProxyUrl: z
+        .string()
+        .optional()
+        .describe("`fea reader serve` proxy URL for a persistent reader session"),
+      readerToken: z.string().optional().describe("Bearer token for the reader proxy")
     },
     (args) =>
       gated("fea_read", args as Record<string, unknown>, () => core.readWithReader(args))
@@ -179,7 +184,11 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
       rebuildPath: z.string().describe("Absolute path to the rebuilt binary"),
       vectorSetId: z.string(),
       seed: z.string().optional(),
-      failUnder: z.number().min(0).max(100).optional().describe("CI mode: fail when score is below this")
+      failUnder: z.number().min(0).max(100).optional().describe("CI mode: fail when score is below this"),
+      packs: z
+        .array(z.string())
+        .optional()
+        .describe("Normalizer packs (http, log, path, ids), additive on defaults")
     },
     (args) =>
       gated("fea_verify_parity", args as Record<string, unknown>, () => core.verifyParity(args))

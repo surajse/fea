@@ -7,7 +7,7 @@ import { z } from "zod";
  * enforces this at the firewall.
  */
 
-export const TargetKind = z.enum(["cli", "http-api", "native"]);
+export const TargetKind = z.enum(["cli", "http-api", "native", "apk"]);
 export type TargetKind = z.infer<typeof TargetKind>;
 
 export const TargetDescriptor = z.object({

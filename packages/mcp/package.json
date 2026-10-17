@@ -9,7 +9,7 @@
     "zod": "4.6.7",
     "@fea/policy": "workspace:*"
   },
-  "description": "FEA MCP server + shared core: the 9 tools of the ingest\u2192spec\u2192synthesize\u2192verify\u2192export loop.",
+  "description": "FEA MCP server: the verified reimplementation loop as 13 tools",
   "exports": {
     ".": "./dist/src/index.js"
   },
@@ -22,6 +22,23 @@
     "test": "vitest run"
   },
   "types": "./dist/src/index.d.ts",
-  "version": "0.3.0",
-  "type": "module"
+  "version": "0.4.0",
+  "type": "module",
+  "author": "surajse",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surajse/fea.git"
+  },
+  "homepage": "https://github.com/surajse/fea#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "reverse-engineering",
+    "clean-room",
+    "testing",
+    "ai-agents"
+  ],
+  "files": [
+    "dist"
+  ]
 }

@@ -5,16 +5,40 @@
   "dependencies": {
     "@fea/mcp": "workspace:*",
     "commander": "15.0.0",
-    "@fea/policy": "workspace:*"
+    "@fea/policy": "workspace:*",
+    "@fea/readers": "workspace:*"
   },
-  "description": "The `fea` command \u2014 every MCP tool, from your terminal.",
+  "description": "FEA \u2014 Forward Engineer Anything. The `fea` command: verified reimplementation loop for any program.",
   "license": "MIT",
-  "name": "@fea/cli",
+  "name": "fea-agents",
   "scripts": {
     "build": "tsc -b",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "cp ../../README.md ../../LICENSE ./ 2>/dev/null; true"
   },
-  "version": "0.3.0",
-  "type": "module"
+  "version": "0.4.0",
+  "type": "module",
+  "author": "surajse",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surajse/fea.git"
+  },
+  "homepage": "https://github.com/surajse/fea#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "reverse-engineering",
+    "clean-room",
+    "testing",
+    "ai-agents"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
