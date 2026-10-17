@@ -188,3 +188,5 @@ export async function dockerAvailable(): Promise<boolean> {
     return false;
   }
 }
+
+export * from "./harness.js";

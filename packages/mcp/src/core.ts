@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
@@ -13,7 +13,8 @@ import {
 } from "@fea/spec";
 import {
   backendName,
-  dockerAvailable
+  dockerAvailable,
+  probeAndroidTools
 } from "@fea/sandbox";
 import {
   ReaReader,
@@ -26,12 +27,19 @@ import {
   type HttpCapturePlan,
   type ReaderNotes
 } from "@fea/readers";
-import { createSynthesisContext, ProvenanceLog, type SynthesisContext } from "@fea/cleanroom";
+import {
+  createSynthesisContext,
+  parseProvenanceFile,
+  ProvenanceLog,
+  verifyProvenanceChain,
+  type SynthesisContext
+} from "@fea/cleanroom";
 import { generateVectors, runParity, type ParityReport } from "@fea/oracle";
+import { PolicyEngine } from "@fea/policy";
 import { FeaStore } from "./store.js";
 import { dirname } from "node:path";
 
-export const FEA_VERSION = "0.5.0";
+export const FEA_VERSION = "0.6.0";
 
 /** Human-readable summary of a staged tool call (for approval prompts). */
 function describeToolCall(tool: string, args: Record<string, unknown>): string {
@@ -159,6 +167,18 @@ export interface ApprovalRequest {
   tool: string;
   summary: string;
   hint: string;
+}
+
+export interface PackCheck {
+  name: string;
+  ok: boolean;
+  detail?: string;
+}
+
+export interface PackVerification {
+  valid: boolean;
+  packId: string;
+  checks: PackCheck[];
 }
 
 /**
@@ -427,6 +447,90 @@ export class FeaCore {
   }
 
   /**
+   * Verify an evidence pack: manifest integrity, file hashes, spec schema,
+   * report identity, and the hash-chained provenance log. This is FEA
+   * checking its own homework — a pack that fails here proves nothing.
+   */
+  verifyPack(input: { packPath: string }): PackVerification {
+    const checks: PackCheck[] = [];
+    const check = (name: string, ok: boolean, detail?: string): boolean => {
+      checks.push({ name, ok, detail });
+      return ok;
+    };
+    const done = (packId: string): PackVerification => ({
+      valid: checks.every((c) => c.ok),
+      packId,
+      checks
+    });
+
+    let manifest: Record<string, unknown>;
+    try {
+      manifest = JSON.parse(readFileSync(join(input.packPath, "manifest.json"), "utf8")) as Record<
+        string,
+        unknown
+      >;
+      check("manifest parses", true);
+    } catch (e) {
+      check("manifest parses", false, e instanceof Error ? e.message : String(e));
+      return done("(unknown)");
+    }
+
+    const packId = typeof manifest["packId"] === "string" ? manifest["packId"] : "(unknown)";
+    const files = manifest["files"];
+    if (typeof manifest["specId"] !== "string" || typeof manifest["reportId"] !== "string" || typeof files !== "object" || files === null) {
+      check("manifest has specId/reportId/files", false, "missing required fields");
+      return done(packId);
+    }
+    check("manifest has specId/reportId/files", true);
+
+    for (const [name, expected] of Object.entries(files as Record<string, unknown>)) {
+      const path = join(input.packPath, name);
+      if (!existsSync(path)) {
+        check(`file present: ${name}`, false, "missing");
+        continue;
+      }
+      const actual = createHash("sha256").update(readFileSync(path)).digest("hex");
+      check(`file intact: ${name}`, actual === expected, actual === expected ? undefined : "sha256 mismatch");
+    }
+
+    try {
+      const spec = JSON.parse(readFileSync(join(input.packPath, "spec.json"), "utf8")) as BehaviorSpec;
+      const res = validateBehaviorSpec(spec);
+      check(
+        "spec validates (BehaviorSpec v1)",
+        res.ok,
+        res.ok ? undefined : res.errors.slice(0, 3).join("; ")
+      );
+      check("spec id matches manifest", spec.id === manifest["specId"], `spec=${spec.id}`);
+    } catch (e) {
+      check("spec validates (BehaviorSpec v1)", false, e instanceof Error ? e.message : String(e));
+    }
+
+    try {
+      const report = JSON.parse(readFileSync(join(input.packPath, "parity-report.json"), "utf8")) as {
+        id: string;
+      };
+      check("report id matches manifest", report.id === manifest["reportId"], `report=${report.id}`);
+    } catch (e) {
+      check("report id matches manifest", false, e instanceof Error ? e.message : String(e));
+    }
+
+    try {
+      const entries = parseProvenanceFile(readFileSync(join(input.packPath, "provenance.jsonl"), "utf8"));
+      const chain = verifyProvenanceChain(entries);
+      check(
+        "provenance chain intact",
+        chain.valid,
+        chain.valid ? `${chain.entries} entries` : `broken at seq ${chain.brokenAt}: ${chain.reason}`
+      );
+    } catch (e) {
+      check("provenance chain intact", false, e instanceof Error ? e.message : String(e));
+    }
+
+    return done(packId);
+  }
+
+  /**
    * Policy "ask" flow, step 1: stage a tool call for human approval.
    * Nothing executes yet. Step 2 is approveTool().
    */
@@ -533,6 +637,15 @@ export class FeaCore {
   async doctor(): Promise<Record<string, string | boolean>> {
     const rea = await probeRea();
     const docker = await dockerAvailable();
+    const android = await probeAndroidTools();
+    let policySource: string;
+    let policyValid = true;
+    try {
+      policySource = PolicyEngine.loadFor(this.store.dir).source;
+    } catch {
+      policyValid = false;
+      policySource = "invalid policy file";
+    }
     return {
       fea: FEA_VERSION,
       node: process.version,
@@ -542,6 +655,10 @@ export class FeaCore {
       dockerAvailable: docker,
       reaInstalled: rea.installed,
       reaVersion: rea.version ?? "(not installed)",
+      policySource,
+      policyValid,
+      adbAvailable: android.adb,
+      emulatorAvailable: android.emulator,
       time: new Date().toISOString()
     };
   }

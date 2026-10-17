@@ -22,7 +22,7 @@
     "test": "vitest run"
   },
   "types": "./dist/src/index.d.ts",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "author": "surajse",
   "repository": {

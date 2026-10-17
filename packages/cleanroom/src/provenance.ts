@@ -22,8 +22,62 @@ function canonical(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
+export interface ChainVerification {
+  valid: boolean;
+  entries: number;
+  /** seq of the first broken entry, if any */
+  brokenAt?: number;
+  reason?: string;
+}
+
 function hashEntry(prevHash: string, body: { seq: number; ts: string; event: string; data: Record<string, unknown> }): string {
   return createHash("sha256").update(prevHash + canonical(body)).digest("hex");
+}
+
+/**
+ * Pure hash-chain verification over parsed entries. Reports the first
+ * broken entry instead of a bare boolean, so callers can say *what*
+ * was tampered with.
+ */
+export function verifyProvenanceChain(entries: ProvenanceEntry[]): ChainVerification {
+  let prev = "GENESIS";
+  for (const e of entries) {
+    if (typeof e.seq !== "number" || typeof e.hash !== "string" || typeof e.prevHash !== "string") {
+      return { valid: false, entries: entries.length, brokenAt: e.seq, reason: "malformed entry" };
+    }
+    if (e.prevHash !== prev) {
+      return {
+        valid: false,
+        entries: entries.length,
+        brokenAt: e.seq,
+        reason: `prevHash mismatch (expected link to ${prev.slice(0, 12)}…)`
+      };
+    }
+    const recomputed = hashEntry(e.prevHash, { seq: e.seq, ts: e.ts, event: e.event, data: e.data });
+    if (recomputed !== e.hash) {
+      return {
+        valid: false,
+        entries: entries.length,
+        brokenAt: e.seq,
+        reason: "entry hash mismatch (data was modified)"
+      };
+    }
+    prev = e.hash;
+  }
+  return { valid: true, entries: entries.length };
+}
+
+/** Parse a provenance.jsonl file into entries (throws on malformed JSON). */
+export function parseProvenanceFile(raw: string): ProvenanceEntry[] {
+  const text = raw.trim();
+  if (!text) return [];
+  return text.split("\n").map((line, i) => {
+    try {
+      return JSON.parse(line) as ProvenanceEntry;
+    } catch {
+      throw new Error(`provenance line ${i} is not valid JSON`);
+    }
+  });
 }
 
 /**
@@ -56,16 +110,7 @@ export class ProvenanceLog {
   }
 
   verify(): boolean {
-    const entries = this.readAll();
-    let prev = "GENESIS";
-    for (const e of entries) {
-      if (e.prevHash !== prev) return false;
-      if (hashEntry(e.prevHash, { seq: e.seq, ts: e.ts, event: e.event, data: e.data }) !== e.hash) {
-        return false;
-      }
-      prev = e.hash;
-    }
-    return true;
+    return verifyProvenanceChain(this.readAll()).valid;
   }
 
   get path(): string {

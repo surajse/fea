@@ -160,7 +160,7 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
   it("doctor reports sandbox backend and REA status", async () => {
     const core = await makeCore();
     const d = await core.doctor();
-    expect(d.fea).toBe("0.5.0");
+    expect(d.fea).toBe("0.6.0");
     expect(d.sandboxBackend).toBe("spawn");
     // reaInstalled depends on the machine (real REA may be installed) —
     // assert shape, not value.
@@ -213,6 +213,64 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
     });
     expect(generated).toBe(10);
     expect(fuzzId).toMatch(/^vs_fuzz_/);
+  });
+
+  it("verifyPack validates a genuine pack", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    const { report } = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: adder,
+      vectorSetId
+    });
+    const { packDir } = core.exportPack({ specId: spec.id, reportId: report.id });
+    const res = core.verifyPack({ packPath: packDir });
+    expect(res.valid).toBe(true);
+    expect(res.checks.length).toBeGreaterThan(5);
+    expect(res.checks.every((c) => c.ok)).toBe(true);
+  });
+
+  it("verifyPack catches a tampered spec", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    const { report } = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: adder,
+      vectorSetId
+    });
+    const { packDir } = core.exportPack({ specId: spec.id, reportId: report.id });
+    // tamper with the spec file inside the pack
+    const { readFileSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const specPath = join(packDir, "spec.json");
+    const tampered = JSON.parse(readFileSync(specPath, "utf8")) as Record<string, unknown>;
+    tampered["version"] = "9.9-hacked";
+    writeFileSync(specPath, JSON.stringify(tampered));
+    const res = core.verifyPack({ packPath: packDir });
+    expect(res.valid).toBe(false);
+    expect(res.checks.some((c) => !c.ok && c.name.includes("spec.json"))).toBe(true);
+  });
+
+  it("verifyPack rejects a missing manifest", async () => {
+    const core = await makeCore();
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const res = core.verifyPack({ packPath: join(mkdtempSync(join(tmpdir(), "fea-")), "nope") });
+    expect(res.valid).toBe(false);
+    expect(res.checks[0].name).toBe("manifest parses");
   });
 
   it("reportHtml renders a self-contained report with escaping", async () => {

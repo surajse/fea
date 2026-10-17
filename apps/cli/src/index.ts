@@ -88,7 +88,7 @@ const program = new Command();
 program
   .name("fea")
   .description("Forward Engineer Anything — verified reimplementation loop")
-  .version("0.5.0")
+  .version("0.6.0")
   .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"))
   .option("--policy <file>", "policy file (allow/ask/deny per tool)");
 
@@ -383,6 +383,20 @@ program
         reportId: opts.report
       })
     );
+  });
+
+program
+  .command("pack-verify")
+  .description("Verify an evidence pack (manifest, hashes, spec, report, provenance chain)")
+  .argument("<path>", "path to the exported pack directory")
+  .action((path: string, cmd) => {
+    const g = globals(cmd);
+    const res = coreFor({ store: g.store }).verifyPack({ packPath: path });
+    print(res);
+    if (!res.valid) {
+      console.error("pack verification FAILED");
+      process.exit(1);
+    }
   });
 
 program

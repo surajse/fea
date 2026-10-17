@@ -149,6 +149,13 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
   );
 
   server.tool(
+    "fea_verify_pack",
+    "Verify an evidence pack: manifest integrity, file hashes, spec schema, report identity, and the hash-chained provenance log. FEA checking its own homework.",
+    { packPath: z.string().describe("Path to the exported pack directory") },
+    (args) => run(() => core.verifyPack(args))
+  );
+
+  server.tool(
     "fea_extract_spec",
     "Build a validated BehaviorSpec (v1.0) from a captured vector set, optionally with reader notes as evidence.",
     { vectorSetId: z.string(), notesId: z.string().optional() },

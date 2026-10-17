@@ -20,7 +20,27 @@ ingest → capture → spec → synthesize → verify → export
 Install (once published): `npm i -g fea-agents` — the `fea` binary. From
 source: `pnpm install && pnpm build`.
 
-## What v0.5 is
+## What v0.6 is
+
+Proof of proof. v0.6 makes FEA's own guarantees verifiable:
+
+- **`fea pack-verify <path>`** (MCP: `fea_verify_pack`, 14th tool) — checks
+  an evidence pack end to end: manifest parses, every file present with
+  matching sha256, spec re-validates against BehaviorSpec v1, report id
+  matches, and the hash-chained provenance log verifies. A tampered pack
+  fails with the exact broken check named.
+- **Chain pinpointing** — `verifyProvenanceChain` reports the first broken
+  entry (`brokenAt` + reason) instead of a bare boolean.
+- **Doctor+** — `fea doctor` now also validates the policy file and reports
+  Android tool presence (`adb`/`emulator`) for the APK story.
+- **APK harness, honestly thin** — `AppHarness` interface + `ManualHarness`
+  (you launch the app, FEA takes its HTTP base URL) + `probeAndroidTools`.
+  The emulator-backed harness waits for a machine with the Android SDK;
+  until then the documented path is launch-it-yourself + `--rebuild-url`.
+
+Dropped honestly: the proxy SSE transport from the old roadmap — it was
+a transport swap with no user-visible benefit over the working `/call`
+protocol, so it stays out rather than shipping theater.
 
 APIs & onboarding. v0.5 adds:
 
@@ -38,6 +58,8 @@ APIs & onboarding. v0.5 adds:
 
 Note: the proxy SSE transport from the v0.4 roadmap stays open — HTTP
 parity was the bigger real gap, so it went first.
+
+## What v0.5 was
 
 ## What v0.4 was
 
@@ -114,11 +136,11 @@ MCP surface is now 13 tools.
 - ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
 - ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
 
-## What's next (v0.6)
+## What's next (v0.7)
 
-SSE transport for the reader proxy, `apk` parity via a launched-app
-harness, more normalizer packs, and the actual npm publish run
-(`docs/PUBLISH.md` — needs your `npm login`).
+Emulator-backed APK harness (needs the Android SDK on the machine),
+`fea watch` for continuous parity on a changing target, and the actual
+npm publish run (`docs/PUBLISH.md` — needs your `npm login`).
 
 ## Docs
 

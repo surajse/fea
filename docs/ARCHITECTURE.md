@@ -71,6 +71,22 @@ v0.5 adds `ansi` (terminal escape codes) and `json` (structural: whole-body
 JSON is parsed, keys sorted, re-stringified — reported as
 `json-canonicalize` so it stays auditable).
 
+## Proof of proof (v0.6)
+
+FEA's thesis is "prove it" — v0.6 turns that on FEA itself:
+
+```
+pack_<id>/ ──▶ fea pack-verify ──▶ manifest parses?
+  manifest.json                          every file present + sha256 match?
+  spec.json                              spec re-validates (BehaviorSpec v1)?
+  parity-report.json                     report id matches manifest?
+  provenance.jsonl                        hash chain verifies? (first break pinpointed)
+```
+
+`verifyProvenanceChain` (pure, in `@fea/cleanroom`) returns the first
+broken entry instead of a bare boolean. `ProvenanceLog.verify()` delegates
+to it.
+
 ## HTTP parity (v0.5)
 
 ```
