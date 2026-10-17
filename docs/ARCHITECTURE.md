@@ -71,6 +71,24 @@ v0.5 adds `ansi` (terminal escape codes) and `json` (structural: whole-body
 JSON is parsed, keys sorted, re-stringified — reported as
 `json-canonicalize` so it stays auditable).
 
+## Continuous proof (v0.7)
+
+Iteration loop for the rebuild author:
+
+```
+fea watch --target tgt_x --rebuild ./my-rebuild --vectorset vs_y --yes
+  run #1 — score 82 (Δ -18 vs baseline) [FAIL]
+  ... edit, save ...
+  run #2 — score 100 (Δ +0 vs baseline) [ok]
+```
+
+- `fea pin --target --vectorset --report` stores a baseline in the store
+  (`baselines/`); every later verify reports the score delta.
+- `fea verify --junit results.xml` writes JUnit XML (one testcase per
+  vector) for CI dashboards.
+- Watch fingerprints: binary → mtime+size; URL → content hash of the base
+  root (one request per poll, default 2s). Policy `ask` requires `--yes`.
+
 ## Proof of proof (v0.6)
 
 FEA's thesis is "prove it" — v0.6 turns that on FEA itself:

@@ -17,6 +17,85 @@ ingest → capture → spec → synthesize → verify → export
 
 **Positioning:** FEA does not replace [REA](https://github.com/morluto/rea) — it consumes REA (or any analysis tool) as its *reader*. *REA reads. FEA rebuilds.*
 
+Install (once published): `npm i -g fea-agents` — the `fea` binary. From
+source: `pnpm install && pnpm build`.
+
+## What v0.7 is
+
+Continuous proof. v0.7 closes the iteration loop:
+
+- **`fea watch`** — re-runs parity every time the rebuild changes
+  (binary: mtime+size; API: content hash of the base URL). Prints each
+  run's score and the delta vs the pinned baseline. Ctrl-C stops.
+  Policy `ask` needs `--yes` (approvals don't work in a watch loop).
+- **`fea pin`** — pins a parity report as the baseline for a
+  (target, vector set) pair. Later `fea verify` runs report `Δ vs baseline`
+  so regressions are visible at a glance.
+- **`fea verify --junit <path>`** — JUnit XML for CI dashboards: one
+  testcase per vector, failures carrying the expected/actual diff.
+
+## What v0.6 was
+
+Proof of proof. v0.6 makes FEA's own guarantees verifiable:
+
+- **`fea pack-verify <path>`** (MCP: `fea_verify_pack`, 14th tool) — checks
+  an evidence pack end to end: manifest parses, every file present with
+  matching sha256, spec re-validates against BehaviorSpec v1, report id
+  matches, and the hash-chained provenance log verifies. A tampered pack
+  fails with the exact broken check named.
+- **Chain pinpointing** — `verifyProvenanceChain` reports the first broken
+  entry (`brokenAt` + reason) instead of a bare boolean.
+- **Doctor+** — `fea doctor` now also validates the policy file and reports
+  Android tool presence (`adb`/`emulator`) for the APK story.
+- **APK harness, honestly thin** — `AppHarness` interface + `ManualHarness`
+  (you launch the app, FEA takes its HTTP base URL) + `probeAndroidTools`.
+  The emulator-backed harness waits for a machine with the Android SDK;
+  until then the documented path is launch-it-yourself + `--rebuild-url`.
+
+Dropped honestly: the proxy SSE transport from the old roadmap — it was
+a transport swap with no user-visible benefit over the working `/call`
+protocol, so it stays out rather than shipping theater.
+
+APIs & onboarding. v0.5 adds:
+
+- **HTTP parity** — the oracle now replays HTTP vectors against two base
+  URLs: `fea verify --target <id> --rebuild-url http://127.0.0.1:3001
+  --vectorset <id>`. Same path+query on both sides; compares status,
+  headers, and body after normalization. Mixed CLI+HTTP vector sets work
+  (each kind needs its rebuild).
+- **`fea init`** — scaffolds a project directory: `fea.policy.json`
+  (recommended), `capture-plans.json` (examples), `FEA.md` (workflow
+  cheat-sheet), `.fea/` store. `fea init my-api --kind http-api --target
+  http://127.0.0.1:3000` ingests immediately.
+- **New normalizer packs** — `ansi` (strip terminal color codes) and `json`
+  (structural: parse, sort keys, re-stringify — auditable in the report).
+
+Note: the proxy SSE transport from the v0.4 roadmap stays open — HTTP
+parity was the bigger real gap, so it went first.
+
+## What v0.5 was
+
+## What v0.4 was
+
+Scale & ship. v0.4 adds:
+
+- **Persistent reader sessions** — `fea reader serve` holds ONE REA session
+  and shares it over loopback HTTP (127.0.0.1 + bearer token), so
+  document-stateful workflows (`open_binary` → `list_strings`) work across
+  separate `fea read` calls. Use `--proxy-url` / `--proxy-token` on `fea read`
+  (or `readerProxyUrl` on the MCP tool).
+- **Normalizer packs** — named, auditable noise filters: `http` (RFC1123
+  dates, ETags), `log` (timestamps, pids), `path` (temp/home dirs, ports),
+  `ids` (UUIDs, hex tokens). `fea verify --packs http,log` — additive on
+  the defaults, all listed in the parity report.
+- **`apk` target kind** — APK files fingerprint like native binaries; the
+  actual analysis goes through the REA reader (JADX/apktool on the reader's
+  machine).
+- **npm-publish-ready** — every package has publish metadata, the CLI
+  publishes as `fea-agents` (name verified free; `fea` itself is taken),
+  `npm pack --dry-run` verified. Steps in `docs/PUBLISH.md` — the publish
+  itself needs your `npm login`, so it's yours to run.
+
 ## Quick start
 
 ```bash
@@ -71,11 +150,11 @@ MCP surface is now 13 tools.
 - ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
 - ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
 
-## What's next (v0.4)
+## What's next (v0.8)
 
-APK reader (needs JADX on the machine — honest skip until then), persistent
-reader sessions over SSE (instead of per-call processes), harness normalizer
-packs (HTTP date headers, log timestamps), npm publish of `fea` + `fea-agents`.
+Emulator-backed APK harness (needs the Android SDK on the machine),
+`fea diff` between vector sets, and the actual npm publish run
+(`docs/PUBLISH.md` — needs your `npm login`).
 
 ## Docs
 

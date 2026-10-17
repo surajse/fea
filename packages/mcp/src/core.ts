@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
@@ -39,7 +39,7 @@ import { PolicyEngine } from "@fea/policy";
 import { FeaStore } from "./store.js";
 import { dirname } from "node:path";
 
-export const FEA_VERSION = "0.6.0";
+export const FEA_VERSION = "0.7.0";
 
 /** Human-readable summary of a staged tool call (for approval prompts). */
 function describeToolCall(tool: string, args: Record<string, unknown>): string {
@@ -59,6 +59,30 @@ function describeToolCall(tool: string, args: Record<string, unknown>): string {
     default:
       return `${tool}(${JSON.stringify(args).slice(0, 200)})`;
   }
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** JUnit XML: one testcase per vector; failures carry the diff. */
+function buildJunitXml(report: ParityReport): string {
+  const cases: string[] = [];
+  for (const id of report.passedVectorIds) {
+    cases.push(`    <testcase classname="fea.parity" name="${escapeXml(id)}"/>`);
+  }
+  for (const f of report.failingVectors) {
+    cases.push(
+      `    <testcase classname="fea.parity" name="${escapeXml(f.vectorId)} [${escapeXml(f.field)}]">\n` +
+        `      <failure message="${escapeXml(`field ${f.field} differs`)}">${escapeXml(`expected: ${f.expected}\nactual: ${f.actual}`)}</failure>\n` +
+        `    </testcase>`
+    );
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="fea-parity ${escapeXml(report.id)}" tests="${report.total}" failures="${report.failed}" timestamp="${escapeXml(report.generatedAt)}">\n${cases.join("\n")}\n    <system-out>parity score ${report.score} (${report.passed}/${report.total} vectors passed)</system-out>\n</testsuite>\n`;
 }
 
 function escapeHtml(s: string): string {
@@ -179,6 +203,21 @@ export interface PackVerification {
   valid: boolean;
   packId: string;
   checks: PackCheck[];
+}
+
+export interface Baseline {
+  id: string;
+  targetId: string;
+  vectorSetId: string;
+  reportId: string;
+  score: number;
+  pinnedAt: string;
+}
+
+function baselineId(targetId: string, vectorSetId: string): string {
+  return (
+    "base_" + createHash("sha256").update(`${targetId}\n${vectorSetId}`).digest("hex").slice(0, 16)
+  );
 }
 
 /**
@@ -378,7 +417,12 @@ export class FeaCore {
     failUnder?: number;
     /** named normalizer packs (http, log, path, ids), additive */
     packs?: string[];
-  }): Promise<{ report: ParityReport; passed: boolean; failUnder?: number }> {
+  }): Promise<{
+    report: ParityReport;
+    passed: boolean;
+    failUnder?: number;
+    baseline?: { score: number; delta: number };
+  }> {
     const target = this.store.load<TargetDescriptor>("targets", input.originalTargetId);
     const set = this.store.load<VectorSet>("vectorsets", input.vectorSetId);
     if (target.kind === "http-api" && !input.rebuildUrl) {
@@ -401,13 +445,128 @@ export class FeaCore {
     });
     this.store.save("reports", report.id, report);
     const passed = input.failUnder === undefined ? true : report.score >= input.failUnder;
+    let baseline: { score: number; delta: number } | undefined;
+    try {
+      const b = this.store.load<Baseline>("baselines", baselineId(target.id, set.id));
+      baseline = { score: b.score, delta: Math.round((report.score - b.score) * 10) / 10 };
+    } catch {
+      // no baseline pinned — not an error
+    }
     this.prov.append("verify", {
       report: report.id,
       score: report.score,
       failUnder: input.failUnder ?? null,
+      baselineDelta: baseline?.delta ?? null,
       passed
     });
-    return { report, passed, failUnder: input.failUnder };
+    return { report, passed, failUnder: input.failUnder, baseline };
+  }
+
+  /**
+   * Pin a parity report as the baseline for a (target, vector set) pair.
+   * Later verifyParity calls report the delta against it.
+   */
+  pinBaseline(input: { targetId: string; vectorSetId: string; reportId: string }): Baseline {
+    const target = this.store.load<TargetDescriptor>("targets", input.targetId);
+    this.store.load<VectorSet>("vectorsets", input.vectorSetId);
+    const report = this.store.load<ParityReport>("reports", input.reportId);
+    const baseline: Baseline = {
+      id: baselineId(target.id, input.vectorSetId),
+      targetId: target.id,
+      vectorSetId: input.vectorSetId,
+      reportId: report.id,
+      score: report.score,
+      pinnedAt: new Date().toISOString()
+    };
+    this.store.save("baselines", baseline.id, baseline);
+    this.prov.append("pin", { baseline: baseline.id, score: baseline.score });
+    return baseline;
+  }
+
+  /**
+   * Watch a rebuild for changes and re-run parity on each change.
+   * For binary rebuilds the fingerprint is mtime+size; for URL rebuilds
+   * it's a hash of a GET on the base root (one request per poll).
+   * Runs once immediately, then on every detected change until maxRuns.
+   */
+  async watchParity(
+    input: {
+      targetId: string;
+      rebuildPath?: string;
+      rebuildUrl?: string;
+      vectorSetId: string;
+      packs?: string[];
+      failUnder?: number;
+      pollMs?: number;
+      maxRuns?: number;
+    },
+    onEvent: (e: {
+      run: number;
+      fingerprint: string;
+      report: ParityReport;
+      baselineDelta?: number;
+      passed: boolean;
+    }) => void | Promise<void>
+  ): Promise<{ runs: number }> {
+    const pollMs = input.pollMs ?? 2000;
+    if (!input.rebuildPath && !input.rebuildUrl) {
+      throw new Error("watch needs rebuildPath or rebuildUrl");
+    }
+    const fingerprintOf = async (): Promise<string> => {
+      if (input.rebuildPath) {
+        const st = statSync(input.rebuildPath);
+        return `path:${st.mtimeMs}:${st.size}`;
+      }
+      const res = await fetch(input.rebuildUrl as string, { signal: AbortSignal.timeout(5000) });
+      const body = await res.text();
+      return `url:${res.status}:` + createHash("sha256").update(body).digest("hex").slice(0, 16);
+    };
+
+    let runs = 0;
+    const doRun = async (fp: string): Promise<void> => {
+      runs++;
+      const { report, passed, baseline } = await this.verifyParity({
+        originalTargetId: input.targetId,
+        rebuildPath: input.rebuildPath,
+        rebuildUrl: input.rebuildUrl,
+        vectorSetId: input.vectorSetId,
+        packs: input.packs,
+        failUnder: input.failUnder
+      });
+      await onEvent({
+        run: runs,
+        fingerprint: fp,
+        report,
+        baselineDelta: baseline?.delta,
+        passed
+      });
+    };
+
+    let last = await fingerprintOf();
+    await doRun(last);
+    while (input.maxRuns === undefined || runs < input.maxRuns) {
+      await new Promise((r) => setTimeout(r, pollMs));
+      let fp: string;
+      try {
+        fp = await fingerprintOf();
+      } catch {
+        continue; // transient — try again next poll
+      }
+      if (fp !== last) {
+        last = fp;
+        await doRun(fp);
+      }
+    }
+    return { runs };
+  }
+
+  /** Render a JUnit XML report for CI dashboards. */
+  reportJunit(input: { reportId: string; outPath?: string }): { path: string } {
+    const report = this.store.load<ParityReport>("reports", input.reportId);
+    const out = input.outPath ?? join(this.store.dir, "reports", `${report.id}.junit.xml`);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, buildJunitXml(report));
+    return { path: out };
   }
 
   exportPack(input: { specId: string; reportId: string }): { packDir: string; manifestSha256: string } {

@@ -88,7 +88,7 @@ const program = new Command();
 program
   .name("fea")
   .description("Forward Engineer Anything — verified reimplementation loop")
-  .version("0.6.0")
+  .version("0.7.0")
   .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"))
   .option("--policy <file>", "policy file (allow/ask/deny per tool)");
 
@@ -260,6 +260,7 @@ program
   .requiredOption("--vectorset <id>", "vector set id")
   .option("--fail-under <n>", "CI mode: exit 1 when score is below n", parseFloat)
   .option("--packs <list>", "normalizer packs, comma-separated (http,log,path,ids,ansi,json)")
+  .option("--junit <path>", "also write a JUnit XML report for CI")
   .option("--yes", "pre-approve if policy says 'ask'")
   .action(
     async (
@@ -270,6 +271,7 @@ program
         vectorset: string;
         failUnder?: number;
         packs?: string;
+        junit?: string;
         yes?: boolean;
       },
       cmd
@@ -283,10 +285,15 @@ program
         failUnder: opts.failUnder,
         packs: opts.packs ? opts.packs.split(",").map((p) => p.trim()).filter(Boolean) : undefined
       };
-      const { report, passed } = await gatedCli("fea_verify_parity", input, g, { yes: opts.yes }, () =>
-        coreFor({ store: g.store }).verifyParity(input)
+      const core = coreFor({ store: g.store });
+      const { report, passed, baseline } = await gatedCli("fea_verify_parity", input, g, { yes: opts.yes }, () =>
+        core.verifyParity(input)
       );
-      print({ report, passed });
+      print({ report, passed, baseline });
+      if (opts.junit) {
+        const { path } = core.reportJunit({ reportId: report.id, outPath: opts.junit });
+        console.error(`junit: ${path}`);
+      }
       if (!passed) {
         console.error(`parity ${report.score} is below --fail-under ${opts.failUnder}`);
         process.exit(1);
@@ -295,6 +302,82 @@ program
       }
     }
   );
+
+program
+  .command("watch")
+  .description("Re-run parity every time the rebuild changes (Ctrl-C to stop)")
+  .requiredOption("--target <id>", "original target id")
+  .option("--rebuild <path>", "path to the rebuilt binary (watched by mtime+size)")
+  .option("--rebuild-url <url>", "base URL of the rebuilt API (watched by content hash)")
+  .requiredOption("--vectorset <id>", "vector set id")
+  .option("--packs <list>", "normalizer packs, comma-separated (http,log,path,ids,ansi,json)")
+  .option("--fail-under <n>", "mark runs scoring below n as failed", parseFloat)
+  .option("--interval-ms <n>", "poll interval in ms", "2000")
+  .option("--yes", "pre-approve (required when policy says 'ask')")
+  .action(
+    async (
+      opts: {
+        target: string;
+        rebuild?: string;
+        rebuildUrl?: string;
+        vectorset: string;
+        packs?: string;
+        failUnder?: number;
+        intervalMs: string;
+        yes?: boolean;
+      },
+      cmd
+    ) => {
+      const g = globals(cmd);
+      const policy = PolicyEngine.loadFor(g.store, g.policy);
+      const decision = policy.check("fea_verify_parity");
+      if (decision === "deny") {
+        console.error(`fea_verify_parity is denied by policy (${policy.source})`);
+        process.exit(1);
+      }
+      if (decision === "ask" && !opts.yes) {
+        console.error("fea watch needs --yes: approvals don't work in a watch loop");
+        process.exit(1);
+      }
+      const core = coreFor({ store: g.store });
+      console.log(`watching ${opts.rebuild ?? opts.rebuildUrl} (Ctrl-C to stop)`);
+      await core.watchParity(
+        {
+          targetId: opts.target,
+          rebuildPath: opts.rebuild,
+          rebuildUrl: opts.rebuildUrl,
+          vectorSetId: opts.vectorset,
+          packs: opts.packs ? opts.packs.split(",").map((p) => p.trim()).filter(Boolean) : undefined,
+          failUnder: opts.failUnder,
+          pollMs: parseInt(opts.intervalMs, 10)
+        },
+        (e) => {
+          const delta =
+            e.baselineDelta === undefined
+              ? ""
+              : ` (Δ ${e.baselineDelta >= 0 ? "+" : ""}${e.baselineDelta} vs baseline)`;
+          console.log(`run #${e.run} — score ${e.report.score}${delta} [${e.passed ? "ok" : "FAIL"}]`);
+        }
+      );
+    }
+  );
+
+program
+  .command("pin")
+  .description("Pin a parity report as the baseline for a (target, vector set) pair")
+  .requiredOption("--target <id>", "original target id")
+  .requiredOption("--vectorset <id>", "vector set id")
+  .requiredOption("--report <id>", "parity report id to pin")
+  .action((opts: { target: string; vectorset: string; report: string }, cmd) => {
+    const g = globals(cmd);
+    print(
+      coreFor({ store: g.store }).pinBaseline({
+        targetId: opts.target,
+        vectorSetId: opts.vectorset,
+        reportId: opts.report
+      })
+    );
+  });
 
 program
   .command("fuzz")

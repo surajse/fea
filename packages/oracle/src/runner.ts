@@ -24,6 +24,8 @@ export interface ParityReport {
   passed: number;
   failed: number;
   total: number;
+  /** ids of vectors that passed (for exact per-vector reporting) */
+  passedVectorIds: string[];
   weightPassed: number;
   weightTotal: number;
   failingVectors: FailingVector[];
@@ -112,6 +114,7 @@ export async function runParity(opts: ParityOptions): Promise<ParityReport> {
   let weightPassed = 0;
   let weightTotal = 0;
   const failingVectors: FailingVector[] = [];
+  const passedVectorIds: string[] = [];
 
   for (const v of opts.vectors) {
     weightTotal += v.weight;
@@ -132,6 +135,7 @@ export async function runParity(opts: ParityOptions): Promise<ParityReport> {
     if (ok) {
       passed += 1;
       weightPassed += v.weight;
+      passedVectorIds.push(v.id);
     } else {
       failed += 1;
     }
@@ -148,6 +152,7 @@ export async function runParity(opts: ParityOptions): Promise<ParityReport> {
     passed,
     failed,
     total,
+    passedVectorIds,
     weightPassed,
     weightTotal,
     failingVectors,

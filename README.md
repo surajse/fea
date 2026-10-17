@@ -20,7 +20,21 @@ ingest → capture → spec → synthesize → verify → export
 Install (once published): `npm i -g fea-agents` — the `fea` binary. From
 source: `pnpm install && pnpm build`.
 
-## What v0.6 is
+## What v0.7 is
+
+Continuous proof. v0.7 closes the iteration loop:
+
+- **`fea watch`** — re-runs parity every time the rebuild changes
+  (binary: mtime+size; API: content hash of the base URL). Prints each
+  run's score and the delta vs the pinned baseline. Ctrl-C stops.
+  Policy `ask` needs `--yes` (approvals don't work in a watch loop).
+- **`fea pin`** — pins a parity report as the baseline for a
+  (target, vector set) pair. Later `fea verify` runs report `Δ vs baseline`
+  so regressions are visible at a glance.
+- **`fea verify --junit <path>`** — JUnit XML for CI dashboards: one
+  testcase per vector, failures carrying the expected/actual diff.
+
+## What v0.6 was
 
 Proof of proof. v0.6 makes FEA's own guarantees verifiable:
 
@@ -136,11 +150,11 @@ MCP surface is now 13 tools.
 - ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
 - ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
 
-## What's next (v0.7)
+## What's next (v0.8)
 
 Emulator-backed APK harness (needs the Android SDK on the machine),
-`fea watch` for continuous parity on a changing target, and the actual
-npm publish run (`docs/PUBLISH.md` — needs your `npm login`).
+`fea diff` between vector sets, and the actual npm publish run
+(`docs/PUBLISH.md` — needs your `npm login`).
 
 ## Docs
 

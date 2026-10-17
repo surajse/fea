@@ -160,7 +160,7 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
   it("doctor reports sandbox backend and REA status", async () => {
     const core = await makeCore();
     const d = await core.doctor();
-    expect(d.fea).toBe("0.6.0");
+    expect(d.fea).toBe("0.7.0");
     expect(d.sandboxBackend).toBe("spawn");
     // reaInstalled depends on the machine (real REA may be installed) —
     // assert shape, not value.
@@ -271,6 +271,88 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
     const res = core.verifyPack({ packPath: join(mkdtempSync(join(tmpdir(), "fea-")), "nope") });
     expect(res.valid).toBe(false);
     expect(res.checks[0].name).toBe("manifest parses");
+  });
+
+  it("pinBaseline stores a baseline; verifyParity reports the delta", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const { report } = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: adder,
+      vectorSetId
+    });
+    const baseline = core.pinBaseline({ targetId: target.id, vectorSetId, reportId: report.id });
+    expect(baseline.score).toBe(100);
+
+    // a worse rebuild now shows a negative delta
+    const bad = makeScript("#!/usr/bin/env node\nconsole.log('wrong');\n");
+    const res2 = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: bad,
+      vectorSetId
+    });
+    expect(res2.baseline?.score).toBe(100);
+    expect(res2.baseline?.delta).toBeLessThan(0);
+  });
+
+  it("watchParity re-runs when the rebuild file changes", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const rebuild = makeScript(ADDER);
+    const events: Array<{ run: number; score: number; fingerprint: string }> = [];
+
+    // change the rebuild after the first run
+    let changed = false;
+    const { writeFileSync } = await import("node:fs");
+    const { runs } = await core.watchParity(
+      { targetId: target.id, rebuildPath: rebuild, vectorSetId, pollMs: 30, maxRuns: 2 },
+      (e) => {
+        events.push({ run: e.run, score: e.report.score, fingerprint: e.fingerprint });
+        if (!changed) {
+          changed = true;
+          writeFileSync(rebuild, "#!/usr/bin/env node\nconsole.log('changed');\n");
+        }
+      }
+    );
+    expect(runs).toBe(2);
+    expect(events).toHaveLength(2);
+    expect(events[0].score).toBe(100);
+    expect(events[1].score).toBeLessThan(100);
+    expect(events[0].fingerprint).not.toBe(events[1].fingerprint);
+  });
+
+  it("reportJunit writes exact per-vector testcases", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }, { argv: ["bad-input"] }]
+    });
+    // make the second vector fail with a broken rebuild
+    const bad = makeScript("#!/usr/bin/env node\nconsole.log('nope');\n");
+    const { report } = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: bad,
+      vectorSetId
+    });
+    const { path } = core.reportJunit({ reportId: report.id });
+    const { readFileSync } = await import("node:fs");
+    const xml = readFileSync(path, "utf8");
+    expect(xml).toContain(`tests="${report.total}"`);
+    expect(xml).toContain(`failures="${report.failed}"`);
+    expect(xml).toContain("<failure");
+    expect(xml).toContain("parity score");
   });
 
   it("reportHtml renders a self-contained report with escaping", async () => {
