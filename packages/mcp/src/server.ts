@@ -166,6 +166,43 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
   );
 
   server.tool(
+    "fea_twin_publish",
+    "Publish a verified twin to the registry. The pack must pass pack-verify and contain only manifest-listed files. May require approval per policy.",
+    {
+      packPath: z.string().describe("Path to the verified evidence pack directory"),
+      name: z.string().describe("Twin name (lowercase, digits, -, _)"),
+      version: z.string().describe("Twin version (semver)").optional(),
+      description: z.string().optional(),
+      packLocation: z.string().describe("Where others fetch the pack (defaults to packPath)").optional(),
+      publisher: z.string().optional(),
+      indexPath: z.string().describe("Registry index path (defaults to <store>/twins/index.json)").optional()
+    },
+    (args) => gated("fea_twin_publish", args, () => core.twinPublish(args))
+  );
+
+  server.tool(
+    "fea_twin_search",
+    "Search the twin registry by name, description, or target kind.",
+    {
+      query: z.string(),
+      indexPath: z.string().optional()
+    },
+    (args) => run(() => core.twinSearch(args))
+  );
+
+  server.tool(
+    "fea_twin_get",
+    "Fetch a twin from the registry: downloads the pack and verifies it on arrival (pack-verify + manifest sha256). Trust, but verify.",
+    {
+      name: z.string(),
+      version: z.string().describe("Defaults to latest").optional(),
+      outDir: z.string().optional(),
+      indexPath: z.string().optional()
+    },
+    (args) => run(() => core.twinGet(args))
+  );
+
+  server.tool(
     "fea_extract_spec",
     "Build a validated BehaviorSpec (v1.0) from a captured vector set, optionally with reader notes as evidence.",
     { vectorSetId: z.string(), notesId: z.string().optional() },

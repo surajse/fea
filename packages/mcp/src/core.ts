@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
@@ -42,10 +42,11 @@ import {
   type ParityReport
 } from "@fea/oracle";
 import { PolicyEngine } from "@fea/policy";
+import { buildTwinEntry, FileTwinIndex, type TwinEntry } from "@fea/twins";
 import { FeaStore } from "./store.js";
 import { dirname } from "node:path";
 
-export const FEA_VERSION = "0.9.0";
+export const FEA_VERSION = "1.0.0";
 
 /** Human-readable summary of a staged tool call (for approval prompts). */
 function describeToolCall(tool: string, args: Record<string, unknown>): string {
@@ -65,6 +66,37 @@ function describeToolCall(tool: string, args: Record<string, unknown>): string {
     default:
       return `${tool}(${JSON.stringify(args).slice(0, 200)})`;
   }
+}
+
+/**
+ * Fetch a twin pack to outDir. Local dir path / file:// URL → recursive copy;
+ * https:// URL → must be a .tar.gz, downloaded and extracted with tar.
+ */
+async function fetchPack(packLocation: string, outDir: string): Promise<void> {
+  mkdirSync(outDir, { recursive: true });
+  if (packLocation.startsWith("https://") || packLocation.startsWith("http://")) {
+    if (!/\.(tar\.gz|tgz)$/.test(packLocation)) {
+      throw new Error(`https pack locations must be .tar.gz archives: ${packLocation}`);
+    }
+    const res = await fetch(packLocation, { signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new Error(`twin pack download failed: HTTP ${res.status}`);
+    const tmp = join(outDir, "pack.tar.gz");
+    writeFileSync(tmp, Buffer.from(await res.arrayBuffer()));
+    try {
+      const tar = await new SpawnBackend().run("tar", ["-xzf", tmp, "-C", outDir], {
+        timeoutMs: 60_000
+      });
+      if (tar.exitCode !== 0) {
+        throw new Error(`tar extraction failed: ${tar.stderr.slice(0, 300)}`);
+      }
+    } finally {
+      rmSync(tmp, { force: true });
+    }
+    return;
+  }
+  const src = packLocation.startsWith("file://") ? packLocation.slice("file://".length) : packLocation;
+  if (!existsSync(src)) throw new Error(`twin pack location does not exist: ${packLocation}`);
+  cpSync(src, outDir, { recursive: true });
 }
 
 function escapeXml(s: string): string {
@@ -753,6 +785,128 @@ export class FeaCore {
       attempts: attempts.length
     });
     return evolution;
+  }
+
+  private twinIndexPath(indexPath?: string): string {
+    return indexPath ?? join(this.store.dir, "twins", "index.json");
+  }
+
+  /**
+   * Publish a verified twin to the registry. Gates:
+   * 1. the pack must pass pack-verify;
+   * 2. the pack dir must contain ONLY manifest-listed files (nothing smuggled
+   *    in — in particular, never the original binary);
+   * 3. name/version are validated by @fea/twins.
+   */
+  twinPublish(input: {
+    packPath: string;
+    name: string;
+    version?: string;
+    description?: string;
+    packLocation?: string;
+    publisher?: string;
+    indexPath?: string;
+  }): TwinEntry {
+    const verification = this.verifyPack({ packPath: input.packPath });
+    if (!verification.valid) {
+      const broken = verification.checks
+        .filter((c) => !c.ok)
+        .map((c) => c.name)
+        .join(", ");
+      throw new Error(`twin publish refused: pack-verify failed (${broken})`);
+    }
+    const manifest = JSON.parse(
+      readFileSync(join(input.packPath, "manifest.json"), "utf8")
+    ) as { specId: string; reportId: string; files: Record<string, string> };
+    const expected = new Set([...Object.keys(manifest.files), "manifest.json"]);
+    const actual = readdirSync(input.packPath).filter((f) => {
+      try {
+        return statSync(join(input.packPath, f)).isFile();
+      } catch {
+        return false;
+      }
+    });
+    const extra = actual.filter((f) => !expected.has(f));
+    if (extra.length > 0) {
+      throw new Error(
+        `twin publish refused: pack contains files outside the manifest (${extra.join(", ")})`
+      );
+    }
+    const spec = JSON.parse(readFileSync(join(input.packPath, "spec.json"), "utf8")) as {
+      id: string;
+      target: { sha256: string; kind: string };
+    };
+    const report = JSON.parse(
+      readFileSync(join(input.packPath, "parity-report.json"), "utf8")
+    ) as { score: number };
+    const manifestBytes = readFileSync(join(input.packPath, "manifest.json"));
+    const entry = buildTwinEntry({
+      name: input.name,
+      version: input.version ?? "1.0.0",
+      description: input.description,
+      targetFingerprint: spec.target.sha256,
+      targetKind: spec.target.kind,
+      parityScore: report.score,
+      specId: spec.id,
+      packSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+      packLocation: input.packLocation ?? input.packPath,
+      publisher: input.publisher ?? process.env.USER ?? "anonymous",
+      feaVersion: FEA_VERSION
+    });
+    new FileTwinIndex(this.twinIndexPath(input.indexPath)).add(entry);
+    this.prov.append("twin-publish", {
+      twin: `${entry.name}@${entry.version}`,
+      score: entry.parityScore,
+      packSha256: entry.packSha256
+    });
+    return entry;
+  }
+
+  /** Search the twin registry (local file index in v1.0). */
+  twinSearch(input: { query: string; indexPath?: string }): TwinEntry[] {
+    return new FileTwinIndex(this.twinIndexPath(input.indexPath)).search(input.query);
+  }
+
+  /**
+   * Fetch a twin: download/copy the pack, then verify on arrival —
+   * pack-verify must pass AND the manifest sha256 must match the index entry.
+   * Trust, but verify.
+   */
+  async twinGet(input: {
+    name: string;
+    version?: string;
+    outDir?: string;
+    indexPath?: string;
+  }): Promise<{ entry: TwinEntry; packDir: string }> {
+    const entry = new FileTwinIndex(this.twinIndexPath(input.indexPath)).find(
+      input.name,
+      input.version
+    );
+    if (!entry) {
+      throw new Error(
+        `unknown twin "${input.name}"${input.version ? `@${input.version}` : ""}`
+      );
+    }
+    if (!entry.packLocation) {
+      throw new Error(`twin "${entry.name}" has no pack location — cannot download`);
+    }
+    const outDir =
+      input.outDir ?? join(this.store.dir, "twins", "packs", `${entry.name}-${entry.version}`);
+    await fetchPack(entry.packLocation, outDir);
+    const verification = this.verifyPack({ packPath: outDir });
+    if (!verification.valid) {
+      throw new Error(`downloaded twin pack failed verification for "${entry.name}"`);
+    }
+    const sha = createHash("sha256")
+      .update(readFileSync(join(outDir, "manifest.json")))
+      .digest("hex");
+    if (sha !== entry.packSha256) {
+      throw new Error(
+        `twin "${entry.name}" manifest sha256 mismatch — index entry does not match the pack`
+      );
+    }
+    this.prov.append("twin-get", { twin: `${entry.name}@${entry.version}`, packDir: outDir });
+    return { entry, packDir: outDir };
   }
 
   /**

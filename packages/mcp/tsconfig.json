@@ -28,6 +28,9 @@
     },
     {
       "path": "../policy"
+    },
+    {
+      "path": "../twins"
     }
   ]
 }

@@ -92,7 +92,7 @@ const program = new Command();
 program
   .name("fea")
   .description("Forward Engineer Anything — verified reimplementation loop")
-  .version("0.9.0")
+  .version("1.0.0")
   .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"))
   .option("--policy <file>", "policy file (allow/ask/deny per tool)");
 
@@ -555,6 +555,90 @@ program
       process.exit(1);
     }
   });
+
+const twinCmd = program.command("twin").description("Publish, search, and fetch verified twins");
+
+twinCmd
+  .command("publish")
+  .description("Publish a verified twin to the registry (pack must pass pack-verify)")
+  .requiredOption("--pack <dir>", "path to the evidence pack directory")
+  .requiredOption("--name <name>", "twin name (lowercase, digits, -, _)")
+  .option("--twin-version <v>", "twin version (semver)", "1.0.0")
+  .option("--description <text>", "what this twin is")
+  .option("--pack-url <url>", "where others fetch the pack (defaults to the local pack path)")
+  .option("--index <path>", "registry index path")
+  .option("--yes", "pre-approve if policy says 'ask'")
+  .action(
+    (
+      opts: {
+        pack: string;
+        name: string;
+        twinVersion: string;
+        description?: string;
+        packUrl?: string;
+        index?: string;
+        yes?: boolean;
+      },
+      cmd
+    ) => {
+      const g = globals(cmd);
+      const policy = PolicyEngine.loadFor(g.store, g.policy);
+      const decision = policy.check("fea_twin_publish");
+      if (decision === "deny") {
+        console.error(`fea_twin_publish is denied by policy (${policy.source})`);
+        process.exit(1);
+      }
+      if (decision === "ask" && !opts.yes) {
+        console.error("twin publish needs --yes (or approve via fea_approve in MCP)");
+        process.exit(1);
+      }
+      print(
+        coreFor({ store: g.store }).twinPublish({
+          packPath: opts.pack,
+          name: opts.name,
+          version: opts.twinVersion,
+          description: opts.description,
+          packLocation: opts.packUrl,
+          indexPath: opts.index
+        })
+      );
+    }
+  );
+
+twinCmd
+  .command("search")
+  .description("Search the twin registry")
+  .argument("<query>", "search text")
+  .option("--index <path>", "registry index path")
+  .action((query: string, opts: { index?: string }, cmd) => {
+    const g = globals(cmd);
+    print(coreFor({ store: g.store }).twinSearch({ query, indexPath: opts.index }));
+  });
+
+twinCmd
+  .command("get")
+  .description("Fetch a twin: downloads the pack and verifies it on arrival")
+  .argument("<name>", "twin name")
+  .option("--twin-version <v>", "specific version (default: latest)")
+  .option("--out-dir <dir>", "where to place the verified pack")
+  .option("--index <path>", "registry index path")
+  .action(
+    async (
+      name: string,
+      opts: { twinVersion?: string; outDir?: string; index?: string },
+      cmd
+    ) => {
+      const g = globals(cmd);
+      print(
+        await coreFor({ store: g.store }).twinGet({
+          name,
+          version: opts.twinVersion,
+          outDir: opts.outDir,
+          indexPath: opts.index
+        })
+      );
+    }
+  );
 
 program
   .command("mcp")

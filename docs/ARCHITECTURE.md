@@ -71,6 +71,29 @@ v0.5 adds `ansi` (terminal escape codes) and `json` (structural: whole-body
 JSON is parsed, keys sorted, re-stringified — reported as
 `json-canonicalize` so it stays auditable).
 
+## Twin registry (v1.0)
+
+`@fea/twins` owns the registry data shapes; `@fea/mcp`'s `FeaCore` owns the
+gates:
+
+```
+twinPublish(packPath, name, version, ...)
+  1. verifyPack must pass            (the proof is real)
+  2. pack dir == manifest files only  (nothing smuggled in)
+  3. buildTwinEntry                   (name/version/sha validation)
+  4. FileTwinIndex.add                (upsert by name+version)
+  5. provenance append
+
+twinGet(name, version?)
+  1. index.find (latest when version omitted)
+  2. fetchPack (local copy | file:// | https .tar.gz)
+  3. verifyPack on arrival + manifest sha256 == index entry
+```
+
+A `TwinEntry` never contains a binary — only metadata and a pack pointer.
+`targetFingerprint` (sha256 of the original) identifies *what* was twinned.
+The file index and the future GitHub index share the entry shape.
+
 ## The self-rebuilding loop (v0.9)
 
 `FeaCore.evolve` turns FEA from verifier into driver:

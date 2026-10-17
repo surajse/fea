@@ -7,9 +7,10 @@
     "@fea/spec": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.1",
     "zod": "4.6.7",
-    "@fea/policy": "workspace:*"
+    "@fea/policy": "workspace:*",
+    "@fea/twins": "workspace:*"
   },
-  "description": "FEA MCP server: the verified reimplementation loop as 13 tools",
+  "description": "FEA MCP server: the verified reimplementation loop as 18 tools",
   "exports": {
     ".": "./dist/src/index.js"
   },
@@ -22,7 +23,7 @@
     "test": "vitest run"
   },
   "types": "./dist/src/index.d.ts",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "type": "module",
   "author": "surajse",
   "repository": {

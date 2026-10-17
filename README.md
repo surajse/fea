@@ -20,7 +20,26 @@ ingest → capture → spec → synthesize → verify → export
 Install (once published): `npm i -g fea-agents` — the `fea` binary. From
 source: `pnpm install && pnpm build`.
 
-## What v0.9 is
+## What v1.0 is
+
+The Twin Era. v1.0 turns FEA from a tool into a movement:
+
+- **Twin registry** (new `@fea/twins` package) — `fea twin publish` mints a
+  registry entry for a verified pack; `fea twin search` finds twins;
+  `fea twin get` fetches a twin and **re-verifies on arrival** (pack-verify
+  + manifest sha256 — trust, but verify). Publish is gated: the pack must
+  pass pack-verify AND contain only manifest-listed files (nothing smuggled
+  in — never the original binary). Policy-gated as `ask` by default.
+  MCP tools: `fea_twin_publish`, `fea_twin_search`, `fea_twin_get` (18 total).
+- **Killer demo** — `examples/twin-demo/`: a word-count utility twinned
+  clean-room, parity **100**, published as `wc-twin@1.0.0`, fetched back and
+  re-verified. The whole Twin Era story in one directory.
+
+The v1.0 index backend is a local JSON file (`<store>/twins/index.json`,
+overridable). It speaks the same `TwinEntry` shape as the planned
+GitHub-backed `fea-twins` index — swapping the backend later changes no entries.
+
+## What v0.9 was
 
 The Self-Rebuilding Era begins. v0.9 closes the biggest open loop in FEA —
 until now the *synthesis* step belonged to the human:
@@ -176,12 +195,13 @@ MCP surface is now 13 tools.
 - ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
 - ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
 
-## What's next (v1.0)
+## What's next (v1.1)
 
-`fea twin publish` (public registry of verified twins), the emulator-backed
-APK harness (needs the Android SDK on the machine), `fea promote` (accept a
-rebuild's new behavior as expected), and the actual npm publish run
-(`docs/PUBLISH.md` — needs your `npm login`).
+Agent presets for evolve (`--agent claude-code` / `codex` — no wrapper
+script), `fea promote` (bless a rebuild's new behavior as expected),
+the GitHub-backed `fea-twins` registry index (needs your go-ahead to create
+the repo), and the actual npm publish run (`docs/PUBLISH.md` — needs your
+`npm login`).
 
 ## Docs
 

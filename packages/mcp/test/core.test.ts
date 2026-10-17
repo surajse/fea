@@ -160,7 +160,7 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
   it("doctor reports sandbox backend and REA status", async () => {
     const core = await makeCore();
     const d = await core.doctor();
-    expect(d.fea).toBe("0.9.0");
+    expect(d.fea).toBe("1.0.0");
     expect(d.sandboxBackend).toBe("spawn");
     // reaInstalled depends on the machine (real REA may be installed) —
     // assert shape, not value.
@@ -271,6 +271,137 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
     const res = core.verifyPack({ packPath: join(mkdtempSync(join(tmpdir(), "fea-")), "nope") });
     expect(res.valid).toBe(false);
     expect(res.checks[0].name).toBe("manifest parses");
+  });
+
+  it("twinPublish publishes a verified twin; twinSearch finds it", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    const { report } = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: adder,
+      vectorSetId
+    });
+    const { packDir } = core.exportPack({ specId: spec.id, reportId: report.id });
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { mkdtempSync } = await import("node:fs");
+    const indexPath = join(mkdtempSync(join(tmpdir(), "fea-")), "index.json");
+
+    const entry = core.twinPublish({
+      packPath: packDir,
+      name: "adder-twin",
+      version: "1.0.0",
+      description: "adder reimplementation",
+      indexPath
+    });
+    expect(entry.name).toBe("adder-twin");
+    expect(entry.parityScore).toBe(100);
+    expect(entry.targetFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(entry.packSha256).toMatch(/^[0-9a-f]{64}$/);
+
+    const found = core.twinSearch({ query: "adder", indexPath });
+    expect(found).toHaveLength(1);
+    expect(found[0].name).toBe("adder-twin");
+    expect(core.twinSearch({ query: "no-such-thing", indexPath })).toHaveLength(0);
+  });
+
+  it("twinPublish refuses a tampered pack", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    const { report } = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: adder,
+      vectorSetId
+    });
+    const { packDir } = core.exportPack({ specId: spec.id, reportId: report.id });
+    const { readFileSync, writeFileSync, mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const specPath = join(packDir, "spec.json");
+    const tampered = JSON.parse(readFileSync(specPath, "utf8")) as Record<string, unknown>;
+    tampered["version"] = "9.9-hacked";
+    writeFileSync(specPath, JSON.stringify(tampered));
+    expect(() =>
+      core.twinPublish({
+        packPath: packDir,
+        name: "bad-twin",
+        indexPath: join(mkdtempSync(join(tmpdir(), "fea-")), "index.json")
+      })
+    ).toThrow(/pack-verify failed/);
+  });
+
+  it("twinPublish refuses packs with extra files", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    const { report } = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: adder,
+      vectorSetId
+    });
+    const { packDir } = core.exportPack({ specId: spec.id, reportId: report.id });
+    const { writeFileSync, mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    writeFileSync(join(packDir, "original-binary-smuggled"), "evil");
+    expect(() =>
+      core.twinPublish({
+        packPath: packDir,
+        name: "smuggle-twin",
+        indexPath: join(mkdtempSync(join(tmpdir(), "fea-")), "index.json")
+      })
+    ).toThrow(/outside the manifest/);
+  });
+
+  it("twinGet fetches and re-verifies the pack", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    const { report } = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: adder,
+      vectorSetId
+    });
+    const { packDir } = core.exportPack({ specId: spec.id, reportId: report.id });
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { mkdtempSync } = await import("node:fs");
+    const indexPath = join(mkdtempSync(join(tmpdir(), "fea-")), "index.json");
+    core.twinPublish({ packPath: packDir, name: "adder-twin", indexPath });
+
+    const outDir = join(mkdtempSync(join(tmpdir(), "fea-")), "fetched");
+    const { entry, packDir: fetched } = await core.twinGet({
+      name: "adder-twin",
+      outDir,
+      indexPath
+    });
+    expect(entry.name).toBe("adder-twin");
+    expect(fetched).toBe(outDir);
+    // the fetched pack verifies standalone
+    expect(core.verifyPack({ packPath: fetched }).valid).toBe(true);
+    await expect(core.twinGet({ name: "nope", indexPath })).rejects.toThrow(/unknown twin/);
   });
 
   it("pinBaseline stores a baseline; verifyParity reports the delta", async () => {
