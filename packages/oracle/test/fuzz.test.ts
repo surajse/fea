@@ -8,7 +8,9 @@ describe("generateVectors", () => {
     const spec = buildSpecFromVectors(target, cliVectors(), "spec_fuzz");
     const a = generateVectors(spec, { seed: "s1", count: 15 });
     const b = generateVectors(spec, { seed: "s1", count: 15 });
-    expect(a).toEqual(b);
+    // recordedAt is wall-clock; determinism covers the vectors themselves
+    const strip = (vs: typeof a) => vs.map(({ recordedAt: _r, ...rest }) => rest);
+    expect(strip(a)).toEqual(strip(b));
   });
 
   it("differs across seeds", () => {

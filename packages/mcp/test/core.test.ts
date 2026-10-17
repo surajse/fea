@@ -160,7 +160,7 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
   it("doctor reports sandbox backend and REA status", async () => {
     const core = await makeCore();
     const d = await core.doctor();
-    expect(d.fea).toBe("0.4.0");
+    expect(d.fea).toBe("0.5.0");
     expect(d.sandboxBackend).toBe("spawn");
     // reaInstalled depends on the machine (real REA may be installed) —
     // assert shape, not value.

@@ -20,7 +20,26 @@ ingest → capture → spec → synthesize → verify → export
 Install (once published): `npm i -g fea-agents` — the `fea` binary. From
 source: `pnpm install && pnpm build`.
 
-## What v0.4 is
+## What v0.5 is
+
+APIs & onboarding. v0.5 adds:
+
+- **HTTP parity** — the oracle now replays HTTP vectors against two base
+  URLs: `fea verify --target <id> --rebuild-url http://127.0.0.1:3001
+  --vectorset <id>`. Same path+query on both sides; compares status,
+  headers, and body after normalization. Mixed CLI+HTTP vector sets work
+  (each kind needs its rebuild).
+- **`fea init`** — scaffolds a project directory: `fea.policy.json`
+  (recommended), `capture-plans.json` (examples), `FEA.md` (workflow
+  cheat-sheet), `.fea/` store. `fea init my-api --kind http-api --target
+  http://127.0.0.1:3000` ingests immediately.
+- **New normalizer packs** — `ansi` (strip terminal color codes) and `json`
+  (structural: parse, sort keys, re-stringify — auditable in the report).
+
+Note: the proxy SSE transport from the v0.4 roadmap stays open — HTTP
+parity was the bigger real gap, so it went first.
+
+## What v0.4 was
 
 Scale & ship. v0.4 adds:
 
@@ -95,11 +114,11 @@ MCP surface is now 13 tools.
 - ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
 - ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
 
-## What's next (v0.5)
+## What's next (v0.6)
 
-Persistent reader sessions are in; next: SSE transport for the proxy
-(instead of plain HTTP), harness normalizer packs for more ecosystems,
-`fea init` project scaffolding, and the actual npm publish run.
+SSE transport for the reader proxy, `apk` parity via a launched-app
+harness, more normalizer packs, and the actual npm publish run
+(`docs/PUBLISH.md` — needs your `npm login`).
 
 ## Docs
 

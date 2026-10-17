@@ -87,7 +87,7 @@ describe("runParity", () => {
     expect(report.score).toBe(100);
   });
 
-  it("rejects non-CLI vectors in v0.1", async () => {
+  it("rejects mismatched vector input/output kinds", async () => {
     const good = script(ADDER);
     await expect(
       runParity({
@@ -98,12 +98,12 @@ describe("runParity", () => {
             id: "v1",
             weight: 1,
             input: { kind: "http", method: "GET", url: "http://x" },
-            output: { kind: "http", status: 200, headers: {}, body: "" },
+            output: { kind: "cli", stdout: "", stderr: "", exitCode: 0 },
             recordedAt: new Date().toISOString()
           }
         ]
       })
-    ).rejects.toThrow(/CLI vectors only/);
+    ).rejects.toThrow(/mismatched vector/);
   });
 });
 

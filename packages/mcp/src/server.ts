@@ -178,17 +178,18 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
 
   server.tool(
     "fea_verify_parity",
-    "Differential parity: run the original target and a rebuild on the same vectors; returns a parity score + failing vectors. failUnder enables CI mode. May require approval per policy.",
+    "Differential parity: run the original target and a rebuild on the same vectors; returns a parity score + failing vectors. CLI/native: rebuildPath (binary). HTTP: rebuildUrl (base URL). failUnder enables CI mode. May require approval per policy.",
     {
       originalTargetId: z.string(),
-      rebuildPath: z.string().describe("Absolute path to the rebuilt binary"),
+      rebuildPath: z.string().optional().describe("Absolute path to the rebuilt binary (cli/native)"),
+      rebuildUrl: z.string().optional().describe("Base URL of the rebuilt API (http-api)"),
       vectorSetId: z.string(),
       seed: z.string().optional(),
       failUnder: z.number().min(0).max(100).optional().describe("CI mode: fail when score is below this"),
       packs: z
         .array(z.string())
         .optional()
-        .describe("Normalizer packs (http, log, path, ids), additive on defaults")
+        .describe("Normalizer packs (http, log, path, ids, ansi, json), additive on defaults")
     },
     (args) =>
       gated("fea_verify_parity", args as Record<string, unknown>, () => core.verifyParity(args))

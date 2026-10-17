@@ -48,11 +48,47 @@ async function gatedCli<T>(
   return fn();
 }
 
+/** Workflow cheat-sheet written by `fea init`. */
+function initDoc(name: string, kind: string): string {
+  return `# ${name} — FEA project
+
+Target kind: \`${kind}\`. The loop, in order:
+
+\`\`\`bash
+# 1. ingest (already done if you passed --target)
+fea ingest <path-or-url> --kind ${kind} --i-have-rights --store .fea
+
+# 2. capture black-box behavior (edit capture-plans.json first)
+fea capture --target <target-id> --plans "$(cat capture-plans.json)" --store .fea
+
+# 3. extract the behavioral spec
+fea spec --vectorset <vectorset-id> --store .fea
+
+# 4. plan the rebuild (human approval required)
+fea plan --spec <spec-id> --store .fea
+# ... review the plan, then approve:
+fea synth-context --approval <token> --store .fea > context.json
+# ... rebuild the target from context.json (clean-room: behavior only) ...
+
+# 5. verify differential parity (http-api: use --rebuild-url)
+fea verify --target <target-id> --rebuild <path> --vectorset <vectorset-id> --store .fea
+fea verify --target <target-id> --rebuild-url http://127.0.0.1:3001 --vectorset <vs> --store .fea
+
+# 6. report + evidence pack
+fea report --report <report-id> --store .fea
+fea pack --spec <spec-id> --report <report-id> --store .fea
+\`\`\`
+
+Policy: \`fea.policy.json\` (allow/ask/deny per tool). Execution-class tools
+ask by default — approve with \`fea approve --token <t>\` or pass \`--yes\`.
+`;
+}
+
 const program = new Command();
 program
   .name("fea")
   .description("Forward Engineer Anything — verified reimplementation loop")
-  .version("0.4.0")
+  .version("0.5.0")
   .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"))
   .option("--policy <file>", "policy file (allow/ask/deny per tool)");
 
@@ -219,16 +255,18 @@ program
   .command("verify")
   .description("Differential parity: original vs rebuild on the same vectors")
   .requiredOption("--target <id>", "original target id")
-  .requiredOption("--rebuild <path>", "absolute path to the rebuilt binary")
+  .option("--rebuild <path>", "absolute path to the rebuilt binary (cli/native)")
+  .option("--rebuild-url <url>", "base URL of the rebuilt API (http-api)")
   .requiredOption("--vectorset <id>", "vector set id")
   .option("--fail-under <n>", "CI mode: exit 1 when score is below n", parseFloat)
-  .option("--packs <list>", "normalizer packs, comma-separated (http,log,path,ids)")
+  .option("--packs <list>", "normalizer packs, comma-separated (http,log,path,ids,ansi,json)")
   .option("--yes", "pre-approve if policy says 'ask'")
   .action(
     async (
       opts: {
         target: string;
-        rebuild: string;
+        rebuild?: string;
+        rebuildUrl?: string;
         vectorset: string;
         failUnder?: number;
         packs?: string;
@@ -240,6 +278,7 @@ program
       const input = {
         originalTargetId: opts.target,
         rebuildPath: opts.rebuild,
+        rebuildUrl: opts.rebuildUrl,
         vectorSetId: opts.vectorset,
         failUnder: opts.failUnder,
         packs: opts.packs ? opts.packs.split(",").map((p) => p.trim()).filter(Boolean) : undefined
@@ -272,6 +311,49 @@ program
         seed: opts.seed
       })
     );
+  });
+
+program
+  .command("init")
+  .description("Scaffold a FEA project directory (policy, workflow doc, example plans)")
+  .argument("<name>", "project directory name")
+  .option("--kind <kind>", "target kind: cli | http-api | native | apk", "cli")
+  .option("--target <pathOrUrl>", "target to ingest right away")
+  .option("--force", "overwrite a non-empty directory")
+  .action(async (name: string, opts: { kind: string; target?: string; force?: boolean }) => {
+    const { mkdirSync, writeFileSync, readdirSync, existsSync } = await import("node:fs");
+    const { RECOMMENDED_POLICY } = await import("@fea/policy");
+    const kinds = ["cli", "http-api", "native", "apk"];
+    if (!kinds.includes(opts.kind)) {
+      console.error(`--kind must be one of ${kinds.join(", ")}`);
+      process.exit(1);
+    }
+    if (existsSync(name) && readdirSync(name).length > 0 && !opts.force) {
+      console.error(`directory ${name} is not empty (use --force to overwrite)`);
+      process.exit(1);
+    }
+    const storeDir = join(name, ".fea");
+    mkdirSync(storeDir, { recursive: true });
+    writeFileSync(join(name, "fea.policy.json"), JSON.stringify(RECOMMENDED_POLICY, null, 2) + "\n");
+    const examplePlans =
+      opts.kind === "http-api"
+        ? JSON.stringify([{ name: "health", method: "GET", url: "http://127.0.0.1:3000/health" }], null, 2)
+        : JSON.stringify([{ name: "example", argv: ["--help"] }], null, 2);
+    writeFileSync(join(name, "capture-plans.json"), examplePlans + "\n");
+    writeFileSync(join(name, "FEA.md"), initDoc(name, opts.kind));
+    let targetLine = "# 1. fea ingest <path-or-url> --kind " + opts.kind + " --i-have-rights --store .fea";
+    if (opts.target) {
+      const t = coreFor({ store: storeDir }).ingestTarget({
+        pathOrUrl: opts.target,
+        kind: opts.kind as "cli" | "http-api" | "native" | "apk",
+        iHaveRights: true
+      });
+      targetLine = `# 1. ingested: ${t.id} (${t.kind})`;
+    }
+    console.log(`initialized ${name}/`);
+    console.log(targetLine);
+    console.log(`# 2. edit capture-plans.json, then: fea capture --target <id> --plans "$(cat capture-plans.json)" --store .fea`);
+    console.log(`# 3. fea spec --vectorset <id> --store .fea   # then plan, approve, verify`);
   });
 
 program

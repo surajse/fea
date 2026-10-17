@@ -67,6 +67,26 @@ non-behavioral noise. Packs are additive on the default normalizers and
 every applied normalizer is listed in the parity report — if a pack hides a
 real difference, the report shows exactly which pattern did it.
 
+v0.5 adds `ansi` (terminal escape codes) and `json` (structural: whole-body
+JSON is parsed, keys sorted, re-stringified — reported as
+`json-canonicalize` so it stays auditable).
+
+## HTTP parity (v0.5)
+
+```
+recorded vector: GET http://original:3000/users?page=2
+                          │ swap origin
+                          ▼
+original: GET http://original:3000/users?page=2 ─┐
+rebuild:  GET http://rebuild:3001/users?page=2  ─┴─▶ compare status + headers + body (normalized)
+```
+
+`runParity` takes `rebuildUrl` for HTTP vectors; each vector kind needs its
+own rebuild (`rebuild` binary path for CLI, `rebuildUrl` base for HTTP).
+Mixed vector sets are allowed. `fea verify` picks via `--rebuild` /
+`--rebuild-url`; `core.verifyParity` validates against the target kind
+(`apk` honestly refuses — it needs a launched-app harness).
+
 ## Policy gate (v0.3)
 
 Execution-class tools pass through `@fea/policy` at the **interface layer**

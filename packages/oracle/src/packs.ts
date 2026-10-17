@@ -102,11 +102,68 @@ export const PACKS: Record<string, NormalizerPack> = {
         replacement: "<HEX>"
       }
     ]
+  },
+  ansi: {
+    name: "ansi",
+    description: "Terminal escape codes: colors, cursor movement",
+    normalizers: [
+      {
+        name: "ansi-csi",
+        pattern: "\\u001b\\[[0-9;?]*[a-zA-Z]",
+        flags: "g",
+        replacement: ""
+      },
+      {
+        name: "ansi-osc",
+        pattern: "\\u001b\\][^\\u0007]*\\u0007",
+        flags: "g",
+        replacement: ""
+      }
+    ]
+  },
+  json: {
+    name: "json",
+    description: "Canonicalize whole-body JSON: parse, sort keys, re-stringify (handled structurally, not by regex)",
+    normalizers: []
   }
 };
 
 export function listPacks(): string[] {
   return Object.keys(PACKS);
+}
+
+/** Pack name for structural JSON canonicalization (not regex-based). */
+export const JSON_PACK = "json";
+
+/** Synthetic report entry so the json pack stays auditable. */
+export const JSON_CANONICALIZER: Normalizer = {
+  name: "json-canonicalize",
+  pattern: "<whole-body JSON: parse, sort keys, re-stringify>",
+  flags: "",
+  replacement: "<canonical JSON>"
+};
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value !== null && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(obj).sort().map((k) => [k, sortKeys(obj[k])]));
+  }
+  return value;
+}
+
+/**
+ * If the whole (trimmed) text parses as JSON, re-stringify with sorted
+ * keys and normalized whitespace. Anything else passes through untouched.
+ */
+export function canonicalizeJson(text: string): string {
+  const trimmed = text.trim();
+  if (!/^[{[]/.test(trimmed)) return text;
+  try {
+    return JSON.stringify(sortKeys(JSON.parse(trimmed)));
+  } catch {
+    return text;
+  }
 }
 
 /** Flatten pack names to normalizers; throws on unknown pack names. */

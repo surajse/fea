@@ -31,7 +31,7 @@ import { generateVectors, runParity, type ParityReport } from "@fea/oracle";
 import { FeaStore } from "./store.js";
 import { dirname } from "node:path";
 
-export const FEA_VERSION = "0.4.0";
+export const FEA_VERSION = "0.5.0";
 
 /** Human-readable summary of a staged tool call (for approval prompts). */
 function describeToolCall(tool: string, args: Record<string, unknown>): string {
@@ -45,7 +45,7 @@ function describeToolCall(tool: string, args: Record<string, unknown>): string {
       return `Run ${plans} capture plan(s) against target ${get("targetId")} (executes the target binary)`;
     }
     case "fea_verify_parity":
-      return `Verify parity: ${get("originalTargetId")} vs rebuild ${get("rebuildPath")} on ${get("vectorSetId")} (executes both binaries)`;
+      return `Verify parity: ${get("originalTargetId")} vs ${get("rebuildPath") || get("rebuildUrl")} on ${get("vectorSetId")} (executes both sides)`;
     case "fea_read":
       return `Call reader tool ${get("tool")} on target ${get("targetId")} (spawns the REA reader)`;
     default:
@@ -348,7 +348,10 @@ export class FeaCore {
 
   async verifyParity(input: {
     originalTargetId: string;
-    rebuildPath: string;
+    /** binary path for cli/native targets */
+    rebuildPath?: string;
+    /** base URL for http-api targets, e.g. http://127.0.0.1:3001 */
+    rebuildUrl?: string;
     vectorSetId: string;
     seed?: string;
     /** CI mode: fail when score is below this threshold */
@@ -358,9 +361,19 @@ export class FeaCore {
   }): Promise<{ report: ParityReport; passed: boolean; failUnder?: number }> {
     const target = this.store.load<TargetDescriptor>("targets", input.originalTargetId);
     const set = this.store.load<VectorSet>("vectorsets", input.vectorSetId);
+    if (target.kind === "http-api" && !input.rebuildUrl) {
+      throw new Error("http-api targets need rebuildUrl (the rebuild's base URL)");
+    }
+    if ((target.kind === "cli" || target.kind === "native") && !input.rebuildPath) {
+      throw new Error("cli/native targets need rebuildPath (the rebuilt binary)");
+    }
+    if (target.kind === "apk") {
+      throw new Error("apk parity needs a launched app harness — not in v0.5");
+    }
     const report = await runParity({
       original: target.pathOrUrl,
       rebuild: input.rebuildPath,
+      rebuildUrl: input.rebuildUrl,
       vectors: set.vectors,
       reportId: `rep_${randomUUID().slice(0, 8)}`,
       seed: input.seed,
@@ -454,7 +467,8 @@ export class FeaCore {
         return this.verifyParity(
           ap.args as {
             originalTargetId: string;
-            rebuildPath: string;
+            rebuildPath?: string;
+            rebuildUrl?: string;
             vectorSetId: string;
             seed?: string;
             failUnder?: number;
