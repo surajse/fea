@@ -46,6 +46,24 @@ fields. Reader notes reach a spec as *evidence references*, never as content
 — a synthesis agent can see "surface X was confirmed by rea_list_exports",
 never decompiled code.
 
+## Policy gate (v0.3)
+
+Execution-class tools pass through `@fea/policy` at the **interface layer**
+(MCP server, CLI) — never inside `FeaCore`, which stays direct for tests and
+programmatic use:
+
+```
+MCP fea_capture_behavior ─┐
+CLI fea capture --yes ────┴─▶ PolicyEngine.check() ─ allow ─▶ run
+                                                ├─ ask ──▶ stage approval
+                                                │           (fea_approve / fea approve --token)
+                                                └─ deny ─▶ refuse with error
+```
+
+- `fea_approve` is always allowed (denying it would deadlock approvals).
+- Plan approvals (fea_plan_rebuild → fea_synthesis_context) are a separate
+  mechanism: they gate *synthesis*, not execution.
+
 ## Key invariants (enforced in code + tests)
 
 1. `BehaviorSpec` never contains implementation internals — schema has no such fields.

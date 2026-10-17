@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { join } from "node:path";
 import { Command } from "commander";
+import { PolicyEngine } from "@fea/policy";
 import { FeaCore, FeaStore, runStdio } from "@fea/mcp";
 
 function coreFor(opts: { store?: string }): FeaCore {
@@ -12,12 +13,48 @@ function print(data: unknown): void {
   console.log(JSON.stringify(data, null, 2));
 }
 
+interface GlobalOpts {
+  store: string;
+  policy?: string;
+}
+
+function globals(cmd: Command): GlobalOpts {
+  return (cmd.optsWithGlobals?.() ?? {}) as GlobalOpts;
+}
+
+/**
+ * Policy gate for execution-class CLI commands. "deny" exits 1; "ask"
+ * without --yes stages an approval and exits 2 with the token.
+ */
+async function gatedCli<T>(
+  toolName: string,
+  args: Record<string, unknown>,
+  g: GlobalOpts,
+  opts: { yes?: boolean },
+  fn: () => Promise<T>
+): Promise<T> {
+  const policy = PolicyEngine.loadFor(g.store, g.policy);
+  const decision = policy.check(toolName);
+  if (decision === "deny") {
+    console.error(`tool "${toolName}" is denied by policy (${policy.source})`);
+    process.exit(1);
+  }
+  if (decision === "ask" && !opts.yes) {
+    const req = await coreFor({ store: g.store }).requestToolApproval(toolName, args);
+    print({ ...req, hint: `fea approve --token ${req.approvalToken} --store ${g.store}` });
+    console.error(`approval required (policy: ${policy.source}); re-run with --yes to pre-approve`);
+    process.exit(2);
+  }
+  return fn();
+}
+
 const program = new Command();
 program
   .name("fea")
   .description("Forward Engineer Anything — verified reimplementation loop")
-  .version("0.2.0")
-  .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"));
+  .version("0.3.0")
+  .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"))
+  .option("--policy <file>", "policy file (allow/ask/deny per tool)");
 
 program
   .command("ingest")
@@ -26,12 +63,12 @@ program
   .option("--kind <kind>", "cli | http-api | native", "cli")
   .option("--i-have-rights", "confirm you own / are licensed to analyze this target")
   .action((pathOrUrl: string, opts: { kind: string; iHaveRights?: boolean }, cmd) => {
-    const global = cmd.optsWithGlobals?.() ?? {};
+    const g = globals(cmd);
     if (opts.kind !== "cli" && opts.kind !== "http-api" && opts.kind !== "native") {
       console.error("--kind must be cli, http-api or native");
       process.exit(1);
     }
-    print(coreFor({ store: (global as { store: string }).store }).ingestTarget({
+    print(coreFor({ store: g.store }).ingestTarget({
       pathOrUrl,
       kind: opts.kind as "cli" | "http-api" | "native",
       iHaveRights: opts.iHaveRights === true
@@ -46,22 +83,32 @@ program
   .option("--args <json>", "JSON arguments for the reader tool", "{}")
   .option("--prelude <json>", "JSON array of {tool, args} to run first in the same session")
   .option("--reader-cmd <cmd>", "custom reader stdio command, e.g. 'rea mcp'")
+  .option("--yes", "pre-approve if policy says 'ask'")
   .action(
     async (
-      opts: { target: string; tool: string; args: string; prelude?: string; readerCmd?: string },
+      opts: { target: string; tool: string; args: string; prelude?: string; readerCmd?: string; yes?: boolean },
       cmd
     ) => {
-      const global = cmd.optsWithGlobals?.() ?? {};
+      const g = globals(cmd);
+      const args = JSON.parse(opts.args) as Record<string, unknown>;
+      const prelude = opts.prelude
+        ? (JSON.parse(opts.prelude) as Array<{ tool: string; args?: Record<string, unknown> }>)
+        : undefined;
       print(
-        await coreFor({ store: (global as { store: string }).store }).readWithReader({
-          targetId: opts.target,
-          tool: opts.tool,
-          args: JSON.parse(opts.args) as Record<string, unknown>,
-          prelude: opts.prelude
-            ? (JSON.parse(opts.prelude) as Array<{ tool: string; args?: Record<string, unknown> }>)
-            : undefined,
-          readerCommand: opts.readerCmd ? opts.readerCmd.split(" ") : undefined
-        })
+        await gatedCli(
+          "fea_read",
+          { targetId: opts.target, tool: opts.tool, args, prelude },
+          g,
+          { yes: opts.yes },
+          () =>
+            coreFor({ store: g.store }).readWithReader({
+              targetId: opts.target,
+              tool: opts.tool,
+              args,
+              prelude,
+              readerCommand: opts.readerCmd ? opts.readerCmd.split(" ") : undefined
+            })
+        )
       );
     }
   );
@@ -71,14 +118,28 @@ program
   .description("Black-box capture: run the target with each plan, record I/O vectors")
   .requiredOption("--target <id>", "target id from ingest")
   .requiredOption("--plans <json>", 'JSON array, e.g. \'[{"name":"add","argv":["2","3"]}]\'')
-  .action(async (opts: { target: string; plans: string }, cmd) => {
-    const global = cmd.optsWithGlobals?.() ?? {};
+  .option("--yes", "pre-approve if policy says 'ask'")
+  .action(async (opts: { target: string; plans: string; yes?: boolean }, cmd) => {
+    const g = globals(cmd);
+    const plans = JSON.parse(opts.plans) as Array<Record<string, unknown>>;
     print(
-      await coreFor({ store: (global as { store: string }).store }).captureBehavior({
-        targetId: opts.target,
-        plans: JSON.parse(opts.plans) as Array<Record<string, unknown>>
-      })
+      await gatedCli(
+        "fea_capture_behavior",
+        { targetId: opts.target, plans },
+        g,
+        { yes: opts.yes },
+        () => coreFor({ store: g.store }).captureBehavior({ targetId: opts.target, plans })
+      )
     );
+  });
+
+program
+  .command("approve")
+  .description("Approve a policy-gated tool call staged by an 'ask' decision")
+  .requiredOption("--token <token>", "approval token from the staged request")
+  .action(async (opts: { token: string }, cmd) => {
+    const g = globals(cmd);
+    print(await coreFor({ store: g.store }).approveTool({ approvalToken: opts.token }));
   });
 
 program
@@ -87,9 +148,9 @@ program
   .requiredOption("--vectorset <id>", "vector set id from capture")
   .option("--notes <id>", "reader notes id to attach as evidence")
   .action((opts: { vectorset: string; notes?: string }, cmd) => {
-    const global = cmd.optsWithGlobals?.() ?? {};
+    const g = globals(cmd);
     print(
-      coreFor({ store: (global as { store: string }).store }).extractSpec({
+      coreFor({ store: g.store }).extractSpec({
         vectorSetId: opts.vectorset,
         notesId: opts.notes
       })
@@ -101,8 +162,8 @@ program
   .description("Propose a rebuild plan (returns a one-time approval token)")
   .requiredOption("--spec <id>", "spec id")
   .action((opts: { spec: string }, cmd) => {
-    const global = cmd.optsWithGlobals?.() ?? {};
-    print(coreFor({ store: (global as { store: string }).store }).planRebuild({ specId: opts.spec }));
+    const g = globals(cmd);
+    print(coreFor({ store: g.store }).planRebuild({ specId: opts.spec }));
   });
 
 program
@@ -111,9 +172,9 @@ program
   .requiredOption("--spec <id>", "spec id")
   .requiredOption("--token <token>", "approval token from plan")
   .action((opts: { spec: string; token: string }, cmd) => {
-    const global = cmd.optsWithGlobals?.() ?? {};
+    const g = globals(cmd);
     print(
-      coreFor({ store: (global as { store: string }).store }).synthesisContext({
+      coreFor({ store: g.store }).synthesisContext({
         specId: opts.spec,
         approvalToken: opts.token
       })
@@ -127,21 +188,61 @@ program
   .requiredOption("--rebuild <path>", "absolute path to the rebuilt binary")
   .requiredOption("--vectorset <id>", "vector set id")
   .option("--fail-under <n>", "CI mode: exit 1 when score is below n", parseFloat)
-  .action(async (opts: { target: string; rebuild: string; vectorset: string; failUnder?: number }, cmd) => {
-    const global = cmd.optsWithGlobals?.() ?? {};
-    const { report, passed } = await coreFor({ store: (global as { store: string }).store }).verifyParity({
-      originalTargetId: opts.target,
-      rebuildPath: opts.rebuild,
-      vectorSetId: opts.vectorset,
-      failUnder: opts.failUnder
-    });
-    print({ report, passed });
-    if (!passed) {
-      console.error(`parity ${report.score} is below --fail-under ${opts.failUnder}`);
-      process.exit(1);
-    } else if (report.score < 100) {
-      console.error(`parity ${report.score} — ${report.failed} failing vector(s); see report for diffs`);
+  .option("--yes", "pre-approve if policy says 'ask'")
+  .action(
+    async (
+      opts: { target: string; rebuild: string; vectorset: string; failUnder?: number; yes?: boolean },
+      cmd
+    ) => {
+      const g = globals(cmd);
+      const input = {
+        originalTargetId: opts.target,
+        rebuildPath: opts.rebuild,
+        vectorSetId: opts.vectorset,
+        failUnder: opts.failUnder
+      };
+      const { report, passed } = await gatedCli("fea_verify_parity", input, g, { yes: opts.yes }, () =>
+        coreFor({ store: g.store }).verifyParity(input)
+      );
+      print({ report, passed });
+      if (!passed) {
+        console.error(`parity ${report.score} is below --fail-under ${opts.failUnder}`);
+        process.exit(1);
+      } else if (report.score < 100) {
+        console.error(`parity ${report.score} — ${report.failed} failing vector(s); see report for diffs`);
+      }
     }
+  );
+
+program
+  .command("fuzz")
+  .description("Generate deterministic fuzz vectors from a spec (stored as a new vector set)")
+  .requiredOption("--spec <id>", "spec id")
+  .option("--count <n>", "how many vectors to generate", "20")
+  .option("--seed <s>", "deterministic seed", "fea")
+  .action(async (opts: { spec: string; count: string; seed: string }, cmd) => {
+    const g = globals(cmd);
+    print(
+      coreFor({ store: g.store }).fuzzVectors({
+        specId: opts.spec,
+        count: parseInt(opts.count, 10),
+        seed: opts.seed
+      })
+    );
+  });
+
+program
+  .command("report")
+  .description("Render a self-contained HTML parity report")
+  .requiredOption("--report <id>", "parity report id")
+  .option("--out <path>", "output path (default: <store>/reports/<id>.html)")
+  .action(async (opts: { report: string; out?: string }, cmd) => {
+    const g = globals(cmd);
+    const { path } = coreFor({ store: g.store }).reportHtml({
+      reportId: opts.report,
+      outPath: opts.out
+    });
+    console.log(path);
   });
 
 program
@@ -150,9 +251,9 @@ program
   .requiredOption("--spec <id>", "spec id")
   .requiredOption("--report <id>", "parity report id")
   .action((opts: { spec: string; report: string }, cmd) => {
-    const global = cmd.optsWithGlobals?.() ?? {};
+    const g = globals(cmd);
     print(
-      coreFor({ store: (global as { store: string }).store }).exportPack({
+      coreFor({ store: g.store }).exportPack({
         specId: opts.spec,
         reportId: opts.report
       })
@@ -163,16 +264,16 @@ program
   .command("mcp")
   .description("Run the FEA MCP server over stdio (for agent registration)")
   .action(async (_opts: unknown, cmd) => {
-    const global = cmd.optsWithGlobals?.() ?? {};
-    await runStdio((global as { store: string }).store);
+    const g = globals(cmd);
+    await runStdio(g.store);
   });
 
 program
   .command("doctor")
   .description("Environment check (fea, node, sandbox backend, docker, REA reader)")
   .action(async (_opts: unknown, cmd) => {
-    const global = cmd.optsWithGlobals?.() ?? {};
-    print(await coreFor({ store: (global as { store: string }).store }).doctor());
+    const g = globals(cmd);
+    print(await coreFor({ store: g.store }).doctor());
   });
 
 program.parseAsync(process.argv).catch((e: unknown) => {

@@ -160,11 +160,82 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
   it("doctor reports sandbox backend and REA status", async () => {
     const core = await makeCore();
     const d = await core.doctor();
-    expect(d.fea).toBe("0.2.0");
+    expect(d.fea).toBe("0.3.0");
     expect(d.sandboxBackend).toBe("spawn");
     // reaInstalled depends on the machine (real REA may be installed) —
     // assert shape, not value.
     expect(typeof d.reaInstalled).toBe("boolean");
     expect(typeof d.dockerAvailable).toBe("boolean");
+  });
+
+  it("policy ask flow: stage then approve executes the call", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const req = await core.requestToolApproval("fea_capture_behavior", {
+      targetId: target.id,
+      plans: [{ name: "add", argv: ["2", "3"] }]
+    });
+    expect(req.approvalRequired).toBe(true);
+    expect(req.approvalToken).toMatch(/^tappr_/);
+    expect(req.summary).toContain("1 capture plan");
+
+    const result = (await core.approveTool({ approvalToken: req.approvalToken })) as {
+      vectorSetId: string;
+      count: number;
+    };
+    expect(result.count).toBe(1);
+
+    // token is single-use
+    await expect(core.approveTool({ approvalToken: req.approvalToken })).rejects.toThrow(
+      /invalid or already consumed/
+    );
+  });
+
+  it("approveTool rejects unknown tokens", async () => {
+    const core = await makeCore();
+    await expect(core.approveTool({ approvalToken: "tappr_nope" })).rejects.toThrow();
+  });
+
+  it("fuzzVectors stores recorded + generated vectors", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    const { vectorSetId: fuzzId, generated } = core.fuzzVectors({
+      specId: spec.id,
+      count: 10,
+      seed: "test-seed"
+    });
+    expect(generated).toBe(10);
+    expect(fuzzId).toMatch(/^vs_fuzz_/);
+  });
+
+  it("reportHtml renders a self-contained report with escaping", async () => {
+    const core = await makeCore();
+    const good = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: good, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const { report } = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: good,
+      vectorSetId
+    });
+    const { path } = core.reportHtml({ reportId: report.id });
+    const { readFileSync, existsSync } = await import("node:fs");
+    expect(existsSync(path)).toBe(true);
+    const html = readFileSync(path, "utf8");
+    expect(html).toContain(String(report.score));
+    expect(html).toContain("not a formal proof");
+    // no external assets
+    expect(html).not.toContain("http://");
+    expect(html).not.toContain("https://");
   });
 });

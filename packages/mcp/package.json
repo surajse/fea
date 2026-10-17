@@ -6,7 +6,8 @@
     "@fea/sandbox": "workspace:*",
     "@fea/spec": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.1",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@fea/policy": "workspace:*"
   },
   "description": "FEA MCP server + shared core: the 9 tools of the ingest\u2192spec\u2192synthesize\u2192verify\u2192export loop.",
   "exports": {
@@ -21,6 +22,6 @@
     "test": "vitest run"
   },
   "types": "./dist/src/index.d.ts",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module"
 }

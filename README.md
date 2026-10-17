@@ -41,7 +41,28 @@ node apps/cli/dist/index.js mcp     # stdio MCP server — 9 tools
 
 See `examples/toy-cli/README.md` for the full demo script.
 
-## What v0.2 is
+## What v0.3 is
+
+Trust & proof. v0.3 adds three things on top of v0.2:
+
+- **Policy engine (`@fea/policy`)** — allow/ask/deny per tool. Anything that
+  *executes* something (`fea_capture_behavior`, `fea_verify_parity`, `fea_read`)
+  can be gated: `allow` runs, `ask` stages an approval the human completes
+  (`fea_approve` / `fea approve --token`), `deny` refuses. Configure via
+  `FEA_POLICY` env, `--policy <file>`, `<store>/fea.policy.json`, or
+  `./fea.policy.json`. A recommended profile ships in code
+  (`RECOMMENDED_POLICY`).
+- **Vector fuzzing** — `fea fuzz --spec <id> --count 50 --seed s1` generates
+  deterministic boundary vectors (empty args, NaN, Infinity, unicode,
+  huge numbers…) stored as a new vector set, so parity is tested beyond the
+  recorded examples.
+- **HTML parity reports** — `fea report --report <id>` renders a
+  self-contained page (score, failing-vector diffs, normalizers) with no
+  external assets.
+
+MCP surface is now 13 tools.
+
+## What v0.2 was
 
 - ✅ Everything in v0.1, plus:
 - ✅ **Native binaries** as a target kind (`--kind native`)
@@ -50,9 +71,11 @@ See `examples/toy-cli/README.md` for the full demo script.
 - ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
 - ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
 
-## What's next (v0.3)
+## What's next (v0.4)
 
-APK reader, policy engine (allow/ask/deny per tool), parity-report web UI, grammar-based vector fuzzing.
+APK reader (needs JADX on the machine — honest skip until then), persistent
+reader sessions over SSE (instead of per-call processes), harness normalizer
+packs (HTTP date headers, log timestamps), npm publish of `fea` + `fea-agents`.
 
 ## Docs
 

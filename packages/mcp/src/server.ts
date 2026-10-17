@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { PolicyEngine } from "@fea/policy";
 import { FeaCore, FEA_VERSION } from "./core.js";
 import { FeaStore } from "./store.js";
 
@@ -52,6 +53,26 @@ async function run(fn: () => Promise<unknown> | unknown): Promise<TextResult> {
 export function createFieaServer(storeDir: string): { server: McpServer; core: FeaCore } {
   const core = new FeaCore(new FeaStore(storeDir));
   const server = new McpServer({ name: "fea", version: FEA_VERSION });
+  const policy = PolicyEngine.loadFor(storeDir);
+
+  /**
+   * Policy gate for execution-class tools. "allow" runs, "ask" stages an
+   * approval (fea_approve completes it), "deny" refuses with an error.
+   */
+  const gated = (
+    toolName: string,
+    args: Record<string, unknown>,
+    fn: () => Promise<unknown> | unknown
+  ): Promise<TextResult> => {
+    const decision = policy.check(toolName);
+    if (decision === "deny") {
+      return Promise.resolve(err(`tool "${toolName}" is denied by policy (${policy.source})`));
+    }
+    if (decision === "ask") {
+      return run(() => core.requestToolApproval(toolName, args));
+    }
+    return run(fn);
+  };
 
   server.tool(
     "fea_ingest_target",
@@ -66,14 +87,17 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
 
   server.tool(
     "fea_capture_behavior",
-    "Black-box capture: run the target with each plan and record I/O vectors. No internals are read.",
+    "Black-box capture: run the target with each plan and record I/O vectors. No internals are read. May require approval per policy.",
     {
       targetId: z.string(),
       plans: z
         .array(z.union([CliPlanSchema, HttpPlanSchema]))
         .describe("Capture plans (CLI argv plans or HTTP request plans)")
     },
-    (args) => run(() => core.captureBehavior({ targetId: args.targetId, plans: args.plans }))
+    (args) =>
+      gated("fea_capture_behavior", args as Record<string, unknown>, () =>
+        core.captureBehavior({ targetId: args.targetId, plans: args.plans })
+      )
   );
 
   server.tool(
@@ -90,7 +114,33 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
       readerCommand: z.array(z.string()).optional().describe("Custom reader stdio command (default: rea mcp)"),
       readerUrl: z.string().optional().describe("Reader Streamable-HTTP URL alternative")
     },
-    (args) => run(() => core.readWithReader(args))
+    (args) =>
+      gated("fea_read", args as Record<string, unknown>, () => core.readWithReader(args))
+  );
+
+  server.tool(
+    "fea_approve",
+    "Approve a policy-gated tool call staged by an 'ask' decision. Consumes the token and executes the call. Always allowed.",
+    { approvalToken: z.string() },
+    (args) => run(() => core.approveTool(args))
+  );
+
+  server.tool(
+    "fea_fuzz",
+    "Generate deterministic fuzz vectors from a spec and store them as a new vector set (recorded + generated).",
+    {
+      specId: z.string(),
+      count: z.number().int().positive().max(500).optional(),
+      seed: z.string().optional()
+    },
+    (args) => run(() => core.fuzzVectors(args))
+  );
+
+  server.tool(
+    "fea_report",
+    "Render a self-contained HTML parity report (no external assets).",
+    { reportId: z.string(), outPath: z.string().optional() },
+    (args) => run(() => core.reportHtml(args))
   );
 
   server.tool(
@@ -123,7 +173,7 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
 
   server.tool(
     "fea_verify_parity",
-    "Differential parity: run the original target and a rebuild on the same vectors; returns a parity score + failing vectors. failUnder enables CI mode.",
+    "Differential parity: run the original target and a rebuild on the same vectors; returns a parity score + failing vectors. failUnder enables CI mode. May require approval per policy.",
     {
       originalTargetId: z.string(),
       rebuildPath: z.string().describe("Absolute path to the rebuilt binary"),
@@ -131,7 +181,8 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
       seed: z.string().optional(),
       failUnder: z.number().min(0).max(100).optional().describe("CI mode: fail when score is below this")
     },
-    (args) => run(() => core.verifyParity(args))
+    (args) =>
+      gated("fea_verify_parity", args as Record<string, unknown>, () => core.verifyParity(args))
   );
 
   server.tool(

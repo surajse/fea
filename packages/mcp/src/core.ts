@@ -27,10 +27,107 @@ import {
   type ReaderNotes
 } from "@fea/readers";
 import { createSynthesisContext, ProvenanceLog, type SynthesisContext } from "@fea/cleanroom";
-import { runParity, type ParityReport } from "@fea/oracle";
+import { generateVectors, runParity, type ParityReport } from "@fea/oracle";
 import { FeaStore } from "./store.js";
+import { dirname } from "node:path";
 
-export const FEA_VERSION = "0.2.0";
+export const FEA_VERSION = "0.3.0";
+
+/** Human-readable summary of a staged tool call (for approval prompts). */
+function describeToolCall(tool: string, args: Record<string, unknown>): string {
+  const get = (k: string) => {
+    const v = args[k];
+    return typeof v === "string" ? v : JSON.stringify(v);
+  };
+  switch (tool) {
+    case "fea_capture_behavior": {
+      const plans = Array.isArray(args["plans"]) ? args["plans"].length : 0;
+      return `Run ${plans} capture plan(s) against target ${get("targetId")} (executes the target binary)`;
+    }
+    case "fea_verify_parity":
+      return `Verify parity: ${get("originalTargetId")} vs rebuild ${get("rebuildPath")} on ${get("vectorSetId")} (executes both binaries)`;
+    case "fea_read":
+      return `Call reader tool ${get("tool")} on target ${get("targetId")} (spawns the REA reader)`;
+    default:
+      return `${tool}(${JSON.stringify(args).slice(0, 200)})`;
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function scoreColor(score: number): string {
+  if (score >= 95) return "#16a34a";
+  if (score >= 80) return "#d97706";
+  return "#dc2626";
+}
+
+/** Self-contained HTML parity report — no external assets, no JS. */
+function buildReportHtml(report: ParityReport): string {
+  const color = scoreColor(report.score);
+  const rows = report.failingVectors
+    .map(
+      (f) => `      <tr>
+        <td><code>${escapeHtml(f.vectorId)}</code></td>
+        <td><code>${escapeHtml(f.field)}</code></td>
+        <td><pre>${escapeHtml(f.expected)}</pre></td>
+        <td><pre>${escapeHtml(f.actual)}</pre></td>
+      </tr>`
+    )
+    .join("\n");
+  const normalizers = report.normalizers
+    .map((n) => `<li><code>${escapeHtml(n.name)}</code> — <code>${escapeHtml(n.pattern)}</code></li>`)
+    .join("\n");
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FEA parity report ${escapeHtml(report.id)}</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #111; }
+  .score { font-size: 4rem; font-weight: 800; color: ${color}; margin: 0; }
+  .meta { color: #555; font-size: 0.9rem; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; vertical-align: top; }
+  th { background: #f5f5f5; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 0.85rem; }
+  code { font-size: 0.85rem; }
+  .note { background: #fffbeb; border: 1px solid #fcd34d; padding: 0.75rem 1rem; border-radius: 0.5rem; margin-top: 1.5rem; }
+</style>
+</head>
+<body>
+  <h1>FEA parity report</h1>
+  <p class="score">${report.score}</p>
+  <p class="meta">
+    report <code>${escapeHtml(report.id)}</code> ·
+    ${report.passed}/${report.total} vectors passed ·
+    generated ${escapeHtml(report.generatedAt)} · seed <code>${escapeHtml(report.seed)}</code><br>
+    original <code>${escapeHtml(report.original)}</code><br>
+    rebuild <code>${escapeHtml(report.rebuild)}</code>
+  </p>
+  <h2>Failing vectors (${report.failingVectors.length})</h2>
+  ${
+    report.failingVectors.length === 0
+      ? "<p>None — every vector matched after normalization.</p>"
+      : `<table>
+      <tr><th>vector</th><th>field</th><th>expected (original)</th><th>actual (rebuild)</th></tr>
+${rows}
+    </table>`
+  }
+  <h2>Normalizers</h2>
+  <ul>${normalizers}</ul>
+  <div class="note"><strong>Honest scope:</strong> this score is a <em>behavioral</em> comparison on the
+  listed vectors after the documented normalizations. It is not a formal proof of equivalence.</div>
+</body>
+</html>
+`;
+}
 
 export interface VectorSet {
   id: string;
@@ -44,6 +141,24 @@ export interface Approval {
   specId: string;
   status: "pending" | "consumed";
   createdAt: string;
+}
+
+/** Pending human approval for a policy-gated ("ask") tool call. */
+export interface ToolApproval {
+  token: string;
+  tool: string;
+  args: Record<string, unknown>;
+  summary: string;
+  status: "pending" | "consumed";
+  createdAt: string;
+}
+
+export interface ApprovalRequest {
+  approvalRequired: true;
+  approvalToken: string;
+  tool: string;
+  summary: string;
+  hint: string;
 }
 
 /**
@@ -288,6 +403,106 @@ export class FeaCore {
 
     this.prov.append("pack", { pack: packId, spec: spec.id, report: report.id });
     return { packDir, manifestSha256: createHash("sha256").update(manifestRaw).digest("hex") };
+  }
+
+  /**
+   * Policy "ask" flow, step 1: stage a tool call for human approval.
+   * Nothing executes yet. Step 2 is approveTool().
+   */
+  async requestToolApproval(tool: string, args: Record<string, unknown>): Promise<ApprovalRequest> {
+    const summary = describeToolCall(tool, args);
+    const approval: ToolApproval = {
+      token: `tappr_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+      tool,
+      args,
+      summary,
+      status: "pending",
+      createdAt: new Date().toISOString()
+    };
+    this.store.save("approvals", approval.token, approval);
+    this.prov.append("tool-approval-requested", { tool, token: approval.token.slice(0, 12) + "…" });
+    return {
+      approvalRequired: true,
+      approvalToken: approval.token,
+      tool,
+      summary,
+      hint: "Approve with fea_approve (MCP) or `fea approve --token <token>` (CLI)."
+    };
+  }
+
+  /** Policy "ask" flow, step 2: consume the token and execute the staged call. */
+  async approveTool(input: { approvalToken: string }): Promise<unknown> {
+    const ap = this.store.load<ToolApproval>("approvals", input.approvalToken);
+    if (ap.status !== "pending" || !ap.tool) {
+      throw new Error("approval token invalid or already consumed");
+    }
+    ap.status = "consumed";
+    this.store.save("approvals", ap.token, ap);
+    this.prov.append("tool-approved", { tool: ap.tool, token: ap.token.slice(0, 12) + "…" });
+    switch (ap.tool) {
+      case "fea_capture_behavior":
+        return this.captureBehavior(ap.args as { targetId: string; plans: Array<Record<string, unknown>> });
+      case "fea_verify_parity":
+        return this.verifyParity(
+          ap.args as {
+            originalTargetId: string;
+            rebuildPath: string;
+            vectorSetId: string;
+            seed?: string;
+            failUnder?: number;
+          }
+        );
+      case "fea_read":
+        return this.readWithReader(
+          ap.args as {
+            targetId: string;
+            tool: string;
+            args?: Record<string, unknown>;
+            prelude?: Array<{ tool: string; args?: Record<string, unknown> }>;
+            readerCommand?: string[];
+            readerUrl?: string;
+          }
+        );
+      default:
+        throw new Error(`unknown tool in approval: ${ap.tool}`);
+    }
+  }
+
+  /**
+   * Generate deterministic fuzz vectors from a spec and store them as a new
+   * vector set (recorded + generated). The oracle is differential, so the
+   * generated vectors need no expected outputs.
+   */
+  fuzzVectors(input: { specId: string; count?: number; seed?: string }): {
+    vectorSetId: string;
+    generated: number;
+  } {
+    const spec = this.getSpec(input);
+    const generated = generateVectors(spec, { count: input.count, seed: input.seed });
+    const set: VectorSet = {
+      id: `vs_fuzz_${randomUUID().slice(0, 8)}`,
+      targetId: spec.target.id,
+      vectors: [...spec.ioExamples, ...generated],
+      createdAt: new Date().toISOString()
+    };
+    this.store.save("vectorsets", set.id, set);
+    this.prov.append("fuzz", {
+      spec: spec.id,
+      vectorset: set.id,
+      generated: generated.length,
+      seed: input.seed ?? "fea"
+    });
+    return { vectorSetId: set.id, generated: generated.length };
+  }
+
+  /** Render a self-contained HTML parity report (no external assets). */
+  reportHtml(input: { reportId: string; outPath?: string }): { path: string } {
+    const report = this.store.load<ParityReport>("reports", input.reportId);
+    const out = input.outPath ?? join(this.store.dir, "reports", `${report.id}.html`);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, buildReportHtml(report));
+    this.prov.append("report", { report: report.id, path: out });
+    return { path: out };
   }
 
   async doctor(): Promise<Record<string, string | boolean>> {

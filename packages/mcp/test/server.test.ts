@@ -38,7 +38,7 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 }
 
 describe("FEA MCP server", () => {
-  it("exposes 10 tools", async () => {
+  it("exposes 13 tools", async () => {
     const client = await connectedClient(mkdtempSync(join(tmpdir(), "fea-")));
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
@@ -52,9 +52,50 @@ describe("FEA MCP server", () => {
         "fea_verify_parity",
         "fea_export_pack",
         "fea_doctor",
-        "fea_read"
+        "fea_read",
+        "fea_approve",
+        "fea_fuzz",
+        "fea_report"
       ].sort()
     );
+    await client.close();
+  });
+
+  it("policy deny refuses the tool", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fea-"));
+    const storeDir = join(dir, ".fea");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    mkdirSync(storeDir, { recursive: true });
+    writeFileSync(
+      join(storeDir, "fea.policy.json"),
+      JSON.stringify({ version: "1.0", tools: { fea_read: "deny" } })
+    );
+    const client = await connectedClient(storeDir);
+    const res = (await client.callTool({
+      name: "fea_read",
+      arguments: { targetId: "tgt_x", tool: "x" }
+    })) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("denied by policy");
+    await client.close();
+  });
+
+  it("policy ask stages an approval instead of executing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fea-"));
+    const storeDir = join(dir, ".fea");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    mkdirSync(storeDir, { recursive: true });
+    writeFileSync(
+      join(storeDir, "fea.policy.json"),
+      JSON.stringify({ version: "1.0", tools: { fea_capture_behavior: "ask" } })
+    );
+    const client = await connectedClient(storeDir);
+    const out = (await call(client, "fea_capture_behavior", {
+      targetId: "tgt_x",
+      plans: []
+    })) as { approvalRequired: boolean; approvalToken: string };
+    expect(out.approvalRequired).toBe(true);
+    expect(out.approvalToken).toMatch(/^tappr_/);
     await client.close();
   });
 
@@ -129,7 +170,7 @@ describe("FEA MCP server", () => {
     expect(pack.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
 
     const doctor = (await call(client, "fea_doctor", {})) as { fea: string };
-    expect(doctor.fea).toBe("0.2.0");
+    expect(doctor.fea).toBe("0.3.0");
 
     await client.close();
   });
