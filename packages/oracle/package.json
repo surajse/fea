@@ -1,0 +1,21 @@
+{
+  "dependencies": {
+    "@fea/sandbox": "workspace:*",
+    "@fea/spec": "workspace:*"
+  },
+  "description": "Differential parity harness: original vs rebuild, same vectors, measured score.",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "license": "MIT",
+  "main": "./dist/src/index.js",
+  "name": "@fea/oracle",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "types": "./dist/src/index.d.ts",
+  "version": "0.1.0",
+  "type": "module"
+}

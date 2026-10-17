@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.fea/
+*.tgz
+.DS_Store
+.env
+coverage/
+*.tsbuildinfo

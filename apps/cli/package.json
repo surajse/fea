@@ -1,0 +1,19 @@
+{
+  "bin": {
+    "fea": "./dist/src/index.js"
+  },
+  "dependencies": {
+    "@fea/mcp": "workspace:*",
+    "commander": "15.0.0"
+  },
+  "description": "The `fea` command \u2014 every MCP tool, from your terminal.",
+  "license": "MIT",
+  "name": "@fea/cli",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "version": "0.1.0",
+  "type": "module"
+}

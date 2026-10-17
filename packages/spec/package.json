@@ -1,0 +1,20 @@
+{
+  "dependencies": {
+    "zod": "4.6.7"
+  },
+  "description": "BehaviorSpec schema (Zod) \u2014 the contract between analysis and synthesis.",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "license": "MIT",
+  "main": "./dist/src/index.js",
+  "name": "@fea/spec",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "types": "./dist/src/index.d.ts",
+  "version": "0.1.0",
+  "type": "module"
+}

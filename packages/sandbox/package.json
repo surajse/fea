@@ -1,0 +1,17 @@
+{
+  "description": "Bounded process execution \u2014 timeouts, output caps, no shell.",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "license": "MIT",
+  "main": "./dist/src/index.js",
+  "name": "@fea/sandbox",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "types": "./dist/src/index.d.ts",
+  "version": "0.1.0",
+  "type": "module"
+}

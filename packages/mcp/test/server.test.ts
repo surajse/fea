@@ -1,0 +1,133 @@
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createFieaServer } from "../src/server.js";
+
+const ADDER = `#!/usr/bin/env node
+const ns = process.argv.slice(2).map(Number);
+if (ns.some(isNaN)) { console.error("not a number"); process.exit(1); }
+console.log(ns.reduce((a, b) => a + b, 0));
+`;
+
+function makeAdder(): string {
+  const dir = mkdtempSync(join(tmpdir(), "fea-"));
+  const file = join(dir, "adder.js");
+  writeFileSync(file, ADDER);
+  chmodSync(file, 0o755);
+  return file;
+}
+
+async function connectedClient(storeDir: string): Promise<Client> {
+  const { server } = createFieaServer(storeDir);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "fea-test", version: "0.1.0" });
+  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+  return client;
+}
+
+async function call(client: Client, name: string, args: Record<string, unknown>): Promise<unknown> {
+  const res = (await client.callTool({ name, arguments: args })) as {
+    content: Array<{ type: string; text: string }>;
+    isError?: boolean;
+  };
+  if (res.isError) throw new Error(`tool ${name} failed: ${res.content[0]?.text}`);
+  return JSON.parse(res.content[0].text as string);
+}
+
+describe("FEA MCP server", () => {
+  it("exposes 9 tools", async () => {
+    const client = await connectedClient(mkdtempSync(join(tmpdir(), "fea-")));
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      [
+        "fea_ingest_target",
+        "fea_capture_behavior",
+        "fea_extract_spec",
+        "fea_get_spec",
+        "fea_plan_rebuild",
+        "fea_synthesis_context",
+        "fea_verify_parity",
+        "fea_export_pack",
+        "fea_doctor"
+      ].sort()
+    );
+    await client.close();
+  });
+
+  it("refuses ingest without authorization", async () => {
+    const client = await connectedClient(mkdtempSync(join(tmpdir(), "fea-")));
+    await expect(
+      call(client, "fea_ingest_target", { pathOrUrl: "/tmp/x", kind: "cli", iHaveRights: false })
+    ).rejects.toThrow(/authorization/);
+    await client.close();
+  });
+
+  it("runs the full loop: ingest → capture → spec → plan → context → verify → pack", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fea-"));
+    const client = await connectedClient(join(dir, ".fea"));
+    const adder = makeAdder();
+
+    const target = (await call(client, "fea_ingest_target", {
+      pathOrUrl: adder,
+      kind: "cli",
+      iHaveRights: true
+    })) as { id: string };
+    expect(target.id).toMatch(/^tgt_/);
+
+    const cap = (await call(client, "fea_capture_behavior", {
+      targetId: target.id,
+      plans: [
+        { name: "add", argv: ["2", "3"] },
+        { name: "bad", argv: ["x"] }
+      ]
+    })) as { vectorSetId: string; count: number };
+    expect(cap.count).toBe(2);
+
+    const spec = (await call(client, "fea_extract_spec", {
+      vectorSetId: cap.vectorSetId
+    })) as { id: string; surfaces: unknown[] };
+    expect(spec.surfaces.length).toBeGreaterThan(0);
+
+    const plan = (await call(client, "fea_plan_rebuild", { specId: spec.id })) as {
+      plan: string[];
+      approvalToken: string;
+      needsApproval: boolean;
+    };
+    expect(plan.needsApproval).toBe(true);
+
+    // firewall: synthesis context must not leak forbidden keys
+    const ctx = (await call(client, "fea_synthesis_context", {
+      specId: spec.id,
+      approvalToken: plan.approvalToken
+    })) as { surfaces: Array<{ ioExamples: unknown[] }> };
+    expect(JSON.stringify(ctx)).not.toMatch(/pseudocode|assembly|decompil/i);
+    expect(ctx.surfaces[0].ioExamples.length).toBeGreaterThan(0);
+
+    // token is single-use
+    await expect(
+      call(client, "fea_synthesis_context", { specId: spec.id, approvalToken: plan.approvalToken })
+    ).rejects.toThrow(/consumed|invalid/);
+
+    // verify: rebuild IS the original here → parity 100
+    const report = (await call(client, "fea_verify_parity", {
+      originalTargetId: target.id,
+      rebuildPath: adder,
+      vectorSetId: cap.vectorSetId
+    })) as { id: string; score: number };
+    expect(report.score).toBe(100);
+
+    const pack = (await call(client, "fea_export_pack", {
+      specId: spec.id,
+      reportId: report.id
+    })) as { packDir: string; manifestSha256: string };
+    expect(pack.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
+
+    const doctor = (await call(client, "fea_doctor", {})) as { fea: string };
+    expect(doctor.fea).toBe("0.1.0");
+
+    await client.close();
+  });
+});

@@ -1,0 +1,21 @@
+{
+  "dependencies": {
+    "@fea/sandbox": "workspace:*",
+    "@fea/spec": "workspace:*"
+  },
+  "description": "Target ingestion + black-box behavior capture (CLI, HTTP).",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "license": "MIT",
+  "main": "./dist/src/index.js",
+  "name": "@fea/readers",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "types": "./dist/src/index.d.ts",
+  "version": "0.1.0",
+  "type": "module"
+}

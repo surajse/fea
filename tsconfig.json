@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo"
+  },
+  "extends": "./tsconfig.base.json",
+  "include": [],
+  "references": [
+    {
+      "path": "./packages/spec"
+    },
+    {
+      "path": "./packages/cleanroom"
+    },
+    {
+      "path": "./packages/oracle"
+    },
+    {
+      "path": "./packages/readers"
+    },
+    {
+      "path": "./packages/sandbox"
+    },
+    {
+      "path": "./packages/mcp"
+    },
+    {
+      "path": "./apps/cli"
+    }
+  ]
+}

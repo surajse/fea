@@ -1,0 +1,26 @@
+{
+  "dependencies": {
+    "@fea/cleanroom": "workspace:*",
+    "@fea/oracle": "workspace:*",
+    "@fea/readers": "workspace:*",
+    "@fea/sandbox": "workspace:*",
+    "@fea/spec": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
+  },
+  "description": "FEA MCP server + shared core: the 9 tools of the ingest\u2192spec\u2192synthesize\u2192verify\u2192export loop.",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "license": "MIT",
+  "main": "./dist/src/index.js",
+  "name": "@fea/mcp",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "types": "./dist/src/index.d.ts",
+  "version": "0.1.0",
+  "type": "module"
+}

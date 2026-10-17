@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
+  },
+  "extends": "../../tsconfig.base.json",
+  "include": [
+    "src",
+    "test"
+  ],
+  "references": [
+    {
+      "path": "../spec"
+    },
+    {
+      "path": "../sandbox"
+    },
+    {
+      "path": "../readers"
+    },
+    {
+      "path": "../cleanroom"
+    },
+    {
+      "path": "../oracle"
+    }
+  ]
+}

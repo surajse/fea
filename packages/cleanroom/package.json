@@ -1,0 +1,20 @@
+{
+  "dependencies": {
+    "@fea/spec": "workspace:*"
+  },
+  "description": "Clean-room firewall: only behavior crosses to synthesis. Plus hash-chained provenance log.",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "license": "MIT",
+  "main": "./dist/src/index.js",
+  "name": "@fea/cleanroom",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "types": "./dist/src/index.d.ts",
+  "version": "0.1.0",
+  "type": "module"
+}
