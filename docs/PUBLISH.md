@@ -16,7 +16,7 @@ The workspace packages depend on each other (`@fea/mcp` → `@fea/policy`,
 `@fea/readers`, …), so publish **dependencies first**, then the CLI:
 
 ```
-spec → sandbox → cleanroom → policy → readers → oracle → mcp → fea-agents (apps/cli)
+spec → sandbox → cleanroom → policy → readers → oracle → twins → mcp → fea-agents (apps/cli)
 ```
 
 ## Steps (run from your machine with npm login)
@@ -27,16 +27,16 @@ npm needs *your* login — the publish can't be done from the build VM.
 2. From `~/workspace/fea` (exact folder):
    ```bash
    pnpm verify                                   # must be ALL GREEN
-   for p in spec sandbox cleanroom policy readers oracle mcp; do
+   for p in spec sandbox cleanroom policy readers oracle twins mcp; do
      (cd packages/$p && npm publish --access public)
    done
    cd apps/cli && npm publish --access public
    ```
-3. Verify: on any machine, `npm i -g fea-agents` then `fea --version` → `0.4.0`.
+3. Verify: on any machine, `npm i -g fea-agents` then `fea --version` → `1.0.0`.
 
 ## After publishing
 
-- `pnpm -r exec npm dist-tag` to confirm all 8 packages show `latest`.
+- `pnpm -r exec npm dist-tag` to confirm all 9 packages show `latest`.
 - The GitHub repo README already documents `npm i -g fea-agents` as the
   install path; flip the "from source" instructions to secondary once the
   packages are live.
