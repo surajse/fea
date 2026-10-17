@@ -41,10 +41,18 @@ node apps/cli/dist/index.js mcp     # stdio MCP server — 9 tools
 
 See `examples/toy-cli/README.md` for the full demo script.
 
-## What v0.1 is (and isn't)
+## What v0.2 is
 
-- ✅ CLI + HTTP-API readers, behavioral spec v1, clean-room firewall, parity oracle, MCP + CLI, evidence packs
-- ❌ Not a decompiler (use REA/Ghidra as readers) · ❌ No license/DRM circumvention workflows · ❌ Parity is behavioral, not a formal proof — the report says exactly what was compared
+- ✅ Everything in v0.1, plus:
+- ✅ **Native binaries** as a target kind (`--kind native`)
+- ✅ **REA reader adapter** (`fea read` / `fea_read`): calls any REA MCP tool, stores findings as evidence — REA stays the reader, FEA stays the rebuilder
+- ✅ **CI mode**: `fea verify --fail-under 95` exits 1 below threshold
+- ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
+- ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
+
+## What's next (v0.3)
+
+APK reader, policy engine (allow/ask/deny per tool), parity-report web UI, grammar-based vector fuzzing.
 
 ## Docs
 

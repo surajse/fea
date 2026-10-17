@@ -38,7 +38,7 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 }
 
 describe("FEA MCP server", () => {
-  it("exposes 9 tools", async () => {
+  it("exposes 10 tools", async () => {
     const client = await connectedClient(mkdtempSync(join(tmpdir(), "fea-")));
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
@@ -51,7 +51,8 @@ describe("FEA MCP server", () => {
         "fea_synthesis_context",
         "fea_verify_parity",
         "fea_export_pack",
-        "fea_doctor"
+        "fea_doctor",
+        "fea_read"
       ].sort()
     );
     await client.close();
@@ -112,12 +113,14 @@ describe("FEA MCP server", () => {
     ).rejects.toThrow(/consumed|invalid/);
 
     // verify: rebuild IS the original here → parity 100
-    const report = (await call(client, "fea_verify_parity", {
+    const { report, passed } = (await call(client, "fea_verify_parity", {
       originalTargetId: target.id,
       rebuildPath: adder,
-      vectorSetId: cap.vectorSetId
-    })) as { id: string; score: number };
+      vectorSetId: cap.vectorSetId,
+      failUnder: 100
+    })) as { report: { id: string; score: number }; passed: boolean };
     expect(report.score).toBe(100);
+    expect(passed).toBe(true);
 
     const pack = (await call(client, "fea_export_pack", {
       specId: spec.id,
@@ -126,7 +129,7 @@ describe("FEA MCP server", () => {
     expect(pack.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
 
     const doctor = (await call(client, "fea_doctor", {})) as { fea: string };
-    expect(doctor.fea).toBe("0.1.0");
+    expect(doctor.fea).toBe("0.2.0");
 
     await client.close();
   });

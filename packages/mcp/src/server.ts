@@ -4,7 +4,7 @@ import { z } from "zod";
 import { FeaCore, FEA_VERSION } from "./core.js";
 import { FeaStore } from "./store.js";
 
-const TargetKindSchema = z.enum(["cli", "http-api"]);
+const TargetKindSchema = z.enum(["cli", "http-api", "native"]);
 
 const CliPlanSchema = z.object({
   name: z.string().optional(),
@@ -77,9 +77,26 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
   );
 
   server.tool(
+    "fea_read",
+    "Ask the REA reader for analysis findings about a target (e.g. list exports). Findings are stored as evidence on the analysis side. Use prelude for session workflows (e.g. open_binary first).",
+    {
+      targetId: z.string(),
+      tool: z.string().describe("Reader tool name, e.g. a REA MCP tool"),
+      args: z.record(z.string(), z.unknown()).optional().describe("Arguments for the reader tool"),
+      prelude: z
+        .array(z.object({ tool: z.string(), args: z.record(z.string(), z.unknown()).optional() }))
+        .optional()
+        .describe("Tool calls to run first in the same reader session"),
+      readerCommand: z.array(z.string()).optional().describe("Custom reader stdio command (default: rea mcp)"),
+      readerUrl: z.string().optional().describe("Reader Streamable-HTTP URL alternative")
+    },
+    (args) => run(() => core.readWithReader(args))
+  );
+
+  server.tool(
     "fea_extract_spec",
-    "Build a validated BehaviorSpec (v1.0) from a captured vector set.",
-    { vectorSetId: z.string() },
+    "Build a validated BehaviorSpec (v1.0) from a captured vector set, optionally with reader notes as evidence.",
+    { vectorSetId: z.string(), notesId: z.string().optional() },
     (args) => run(() => core.extractSpec(args))
   );
 
@@ -106,12 +123,13 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
 
   server.tool(
     "fea_verify_parity",
-    "Differential parity: run the original target and a rebuild on the same vectors; returns a parity score + failing vectors.",
+    "Differential parity: run the original target and a rebuild on the same vectors; returns a parity score + failing vectors. failUnder enables CI mode.",
     {
       originalTargetId: z.string(),
       rebuildPath: z.string().describe("Absolute path to the rebuilt binary"),
       vectorSetId: z.string(),
-      seed: z.string().optional()
+      seed: z.string().optional(),
+      failUnder: z.number().min(0).max(100).optional().describe("CI mode: fail when score is below this")
     },
     (args) => run(() => core.verifyParity(args))
   );

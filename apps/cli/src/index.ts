@@ -16,27 +16,55 @@ const program = new Command();
 program
   .name("fea")
   .description("Forward Engineer Anything — verified reimplementation loop")
-  .version("0.1.0")
+  .version("0.2.0")
   .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"));
 
 program
   .command("ingest")
   .description("Register a target you are authorized to analyze")
-  .argument("<pathOrUrl>", "absolute path to a CLI binary, or base URL of an HTTP API")
-  .option("--kind <kind>", "cli | http-api", "cli")
+  .argument("<pathOrUrl>", "absolute path to a CLI/native binary, or base URL of an HTTP API")
+  .option("--kind <kind>", "cli | http-api | native", "cli")
   .option("--i-have-rights", "confirm you own / are licensed to analyze this target")
   .action((pathOrUrl: string, opts: { kind: string; iHaveRights?: boolean }, cmd) => {
     const global = cmd.optsWithGlobals?.() ?? {};
-    if (opts.kind !== "cli" && opts.kind !== "http-api") {
-      console.error("--kind must be cli or http-api");
+    if (opts.kind !== "cli" && opts.kind !== "http-api" && opts.kind !== "native") {
+      console.error("--kind must be cli, http-api or native");
       process.exit(1);
     }
     print(coreFor({ store: (global as { store: string }).store }).ingestTarget({
       pathOrUrl,
-      kind: opts.kind as "cli" | "http-api",
+      kind: opts.kind as "cli" | "http-api" | "native",
       iHaveRights: opts.iHaveRights === true
     }));
   });
+
+program
+  .command("read")
+  .description("Ask the REA reader for analysis findings about a target (stored as evidence)")
+  .requiredOption("--target <id>", "target id from ingest")
+  .requiredOption("--tool <name>", "reader tool name (a REA MCP tool)")
+  .option("--args <json>", "JSON arguments for the reader tool", "{}")
+  .option("--prelude <json>", "JSON array of {tool, args} to run first in the same session")
+  .option("--reader-cmd <cmd>", "custom reader stdio command, e.g. 'rea mcp'")
+  .action(
+    async (
+      opts: { target: string; tool: string; args: string; prelude?: string; readerCmd?: string },
+      cmd
+    ) => {
+      const global = cmd.optsWithGlobals?.() ?? {};
+      print(
+        await coreFor({ store: (global as { store: string }).store }).readWithReader({
+          targetId: opts.target,
+          tool: opts.tool,
+          args: JSON.parse(opts.args) as Record<string, unknown>,
+          prelude: opts.prelude
+            ? (JSON.parse(opts.prelude) as Array<{ tool: string; args?: Record<string, unknown> }>)
+            : undefined,
+          readerCommand: opts.readerCmd ? opts.readerCmd.split(" ") : undefined
+        })
+      );
+    }
+  );
 
 program
   .command("capture")
@@ -57,10 +85,14 @@ program
   .command("spec")
   .description("Build a validated BehaviorSpec from a captured vector set")
   .requiredOption("--vectorset <id>", "vector set id from capture")
-  .action((opts: { vectorset: string }, cmd) => {
+  .option("--notes <id>", "reader notes id to attach as evidence")
+  .action((opts: { vectorset: string; notes?: string }, cmd) => {
     const global = cmd.optsWithGlobals?.() ?? {};
     print(
-      coreFor({ store: (global as { store: string }).store }).extractSpec({ vectorSetId: opts.vectorset })
+      coreFor({ store: (global as { store: string }).store }).extractSpec({
+        vectorSetId: opts.vectorset,
+        notesId: opts.notes
+      })
     );
   });
 
@@ -94,15 +126,20 @@ program
   .requiredOption("--target <id>", "original target id")
   .requiredOption("--rebuild <path>", "absolute path to the rebuilt binary")
   .requiredOption("--vectorset <id>", "vector set id")
-  .action(async (opts: { target: string; rebuild: string; vectorset: string }, cmd) => {
+  .option("--fail-under <n>", "CI mode: exit 1 when score is below n", parseFloat)
+  .action(async (opts: { target: string; rebuild: string; vectorset: string; failUnder?: number }, cmd) => {
     const global = cmd.optsWithGlobals?.() ?? {};
-    const report = await coreFor({ store: (global as { store: string }).store }).verifyParity({
+    const { report, passed } = await coreFor({ store: (global as { store: string }).store }).verifyParity({
       originalTargetId: opts.target,
       rebuildPath: opts.rebuild,
-      vectorSetId: opts.vectorset
+      vectorSetId: opts.vectorset,
+      failUnder: opts.failUnder
     });
-    print(report);
-    if (report.score < 100) {
+    print({ report, passed });
+    if (!passed) {
+      console.error(`parity ${report.score} is below --fail-under ${opts.failUnder}`);
+      process.exit(1);
+    } else if (report.score < 100) {
       console.error(`parity ${report.score} — ${report.failed} failing vector(s); see report for diffs`);
     }
   });
@@ -132,10 +169,10 @@ program
 
 program
   .command("doctor")
-  .description("Environment check")
-  .action((_opts: unknown, cmd) => {
+  .description("Environment check (fea, node, sandbox backend, docker, REA reader)")
+  .action(async (_opts: unknown, cmd) => {
     const global = cmd.optsWithGlobals?.() ?? {};
-    print(coreFor({ store: (global as { store: string }).store }).doctor());
+    print(await coreFor({ store: (global as { store: string }).store }).doctor());
   });
 
 program.parseAsync(process.argv).catch((e: unknown) => {

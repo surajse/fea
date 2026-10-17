@@ -1,7 +1,9 @@
 {
   "dependencies": {
     "@fea/sandbox": "workspace:*",
-    "@fea/spec": "workspace:*"
+    "@fea/spec": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
   },
   "description": "Target ingestion + black-box behavior capture (CLI, HTTP).",
   "exports": {
@@ -16,6 +18,6 @@
     "test": "vitest run"
   },
   "types": "./dist/src/index.d.ts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module"
 }

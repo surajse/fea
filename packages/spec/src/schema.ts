@@ -7,13 +7,13 @@ import { z } from "zod";
  * enforces this at the firewall.
  */
 
-export const TargetKind = z.enum(["cli", "http-api"]);
+export const TargetKind = z.enum(["cli", "http-api", "native"]);
 export type TargetKind = z.infer<typeof TargetKind>;
 
 export const TargetDescriptor = z.object({
   id: z.string().min(1),
   kind: TargetKind,
-  /** absolute file path (cli) or base URL (http-api) */
+  /** absolute file path (cli/native) or base URL (http-api) */
   pathOrUrl: z.string().min(1),
   /** sha256 of the binary file, or of the capture plan for http-api */
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
