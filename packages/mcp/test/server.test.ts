@@ -172,7 +172,7 @@ describe("FEA MCP server", () => {
     expect(pack.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
 
     const doctor = (await call(client, "fea_doctor", {})) as { fea: string };
-    expect(doctor.fea).toBe("0.8.0");
+    expect(doctor.fea).toBe("0.9.0");
 
     await client.close();
   });

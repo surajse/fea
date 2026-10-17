@@ -4,7 +4,7 @@ import { join } from "node:path";
 /** Tiny JSON file-store under one directory (default: ./.fea). */
 export class FeaStore {
   constructor(public dir: string) {
-    for (const sub of ["targets", "vectorsets", "specs", "reports", "approvals", "packs", "notes", "baselines"]) {
+    for (const sub of ["targets", "vectorsets", "specs", "reports", "approvals", "packs", "notes", "baselines", "evolutions"]) {
       mkdirSync(join(dir, sub), { recursive: true });
     }
   }

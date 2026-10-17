@@ -160,7 +160,7 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
   it("doctor reports sandbox backend and REA status", async () => {
     const core = await makeCore();
     const d = await core.doctor();
-    expect(d.fea).toBe("0.8.0");
+    expect(d.fea).toBe("0.9.0");
     expect(d.sandboxBackend).toBe("spawn");
     // reaInstalled depends on the machine (real REA may be installed) —
     // assert shape, not value.
@@ -404,6 +404,107 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
     expect(d.added).toHaveLength(0);
     expect(d.removed).toHaveLength(0);
     expect(d.changed).toHaveLength(0);
+  });
+
+  it("evolve converges when the agent learns from failing vectors", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    const dir = mkdtempSync(join(tmpdir(), "fea-evo-"));
+    const agentPath = join(dir, "mock-agent.cjs");
+    const reqPrefix = join(dir, "req-");
+    const rebuildPrefix = join(dir, "rebuild-");
+    writeFileSync(
+      agentPath,
+      "const fs = require('node:fs');\n" +
+        `const GOOD = ${JSON.stringify(ADDER)};\n` +
+        "let input = '';\n" +
+        "process.stdin.on('data', (c) => (input += c));\n" +
+        "process.stdin.on('end', () => {\n" +
+        "  const req = JSON.parse(input);\n" +
+        `  fs.writeFileSync(${JSON.stringify(reqPrefix)} + req.attempt + '.json', input);\n` +
+        `  const rebuild = ${JSON.stringify(rebuildPrefix)} + req.attempt + '.js';\n` +
+        "  const src = req.attempt === 1 ? '#!/usr/bin/env node\\nconsole.log(\\'broken\\');\\n' : GOOD;\n" +
+        "  fs.writeFileSync(rebuild, src, { mode: 0o755 });\n" +
+        "  console.log(JSON.stringify({ rebuildPath: rebuild }));\n" +
+        "});\n"
+    );
+    const evo = await core.evolve({
+      specId: spec.id,
+      vectorSetId,
+      agentCommand: "node",
+      agentArgs: [agentPath],
+      maxAttempts: 3
+    });
+    const { readFileSync } = await import("node:fs");
+    expect(evo.converged).toBe(true);
+    expect(evo.attempts).toHaveLength(2);
+    expect(evo.bestScore).toBe(100);
+    expect(evo.attempts[0].score).toBe(0);
+    const req2 = JSON.parse(readFileSync(join(dir, "req-2.json"), "utf8")) as {
+      failingVectors: unknown[];
+      lastScore: number;
+    };
+    expect(req2.failingVectors.length).toBeGreaterThan(0);
+    expect(req2.lastScore).toBe(0);
+    const req1raw = readFileSync(join(dir, "req-1.json"), "utf8");
+    expect(req1raw).not.toContain(adder);
+    expect(JSON.parse(req1raw).synthesisContext.surfaces.length).toBeGreaterThan(0);
+  });
+
+  it("evolve gives up after maxAttempts without converging", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    const dir = mkdtempSync(join(tmpdir(), "fea-evo-"));
+    const agentPath = join(dir, "stubborn.cjs");
+    const rebuildFile = join(dir, "r.js");
+    writeFileSync(
+      agentPath,
+      "let input = '';\n" +
+        "process.stdin.on('data', (c) => (input += c));\n" +
+        "process.stdin.on('end', () => {\n" +
+        `  require('node:fs').writeFileSync(${JSON.stringify(rebuildFile)}, '#!/usr/bin/env node\\nconsole.log(\\'nope\\');\\n', { mode: 0o755 });\n` +
+        `  console.log(JSON.stringify({ rebuildPath: ${JSON.stringify(rebuildFile)} }));\n` +
+        "});\n"
+    );
+    const evo = await core.evolve({
+      specId: spec.id,
+      vectorSetId,
+      agentCommand: "node",
+      agentArgs: [agentPath],
+      maxAttempts: 3
+    });
+    expect(evo.converged).toBe(false);
+    expect(evo.attempts).toHaveLength(3);
+    expect(evo.bestScore).toBe(0);
+  });
+
+  it("evolve rejects an agent that breaks the JSON protocol", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    const dir = mkdtempSync(join(tmpdir(), "fea-evo-"));
+    const agentPath = join(dir, "garbage.cjs");
+    writeFileSync(agentPath, "console.log('i am not json');\n");
+    await expect(
+      core.evolve({ specId: spec.id, vectorSetId, agentCommand: "node", agentArgs: [agentPath] })
+    ).rejects.toThrow(/must print JSON/);
   });
 
   it("reportHtml renders a self-contained report with escaping", async () => {

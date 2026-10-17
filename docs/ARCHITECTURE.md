@@ -71,6 +71,29 @@ v0.5 adds `ansi` (terminal escape codes) and `json` (structural: whole-body
 JSON is parsed, keys sorted, re-stringified — reported as
 `json-canonicalize` so it stays auditable).
 
+## The self-rebuilding loop (v0.9)
+
+`FeaCore.evolve` turns FEA from verifier into driver:
+
+```
+spec ──▶ synthesis context (firewall-scrubbed, behavior only)
+              │  ┌─────────────────────────────────────────┐
+              ▼  ▼                                         │
+         agent command (stdin: context + failing vectors)  │
+              │  stdout: {"rebuildPath": "..."}            │
+              ▼                                           │
+         parity oracle → score ──▶ converged? ── no ──────┘
+                                    │ yes
+                                    ▼ best rebuild + evolution report
+```
+
+- The agent never sees the original binary path; `evolve` fails closed if
+  the path ever appears in the agent's request JSON.
+- Attempts, scores, and the best rebuild are stored (`evolutions/`) and
+  appended to the provenance log.
+- Long-running like `watch`: CLI-only, no MCP tool. Policy `ask` on
+  `fea_verify_parity` requires `--yes`.
+
 ## What changed (v0.8)
 
 `diffVectorSets` compares two vector sets and reports added / removed /

@@ -20,7 +20,23 @@ ingest → capture → spec → synthesize → verify → export
 Install (once published): `npm i -g fea-agents` — the `fea` binary. From
 source: `pnpm install && pnpm build`.
 
-## What v0.8 is
+## What v0.9 is
+
+The Self-Rebuilding Era begins. v0.9 closes the biggest open loop in FEA —
+until now the *synthesis* step belonged to the human:
+
+- **`fea evolve`** — drives an external agent program until parity
+  converges. The agent gets ONLY the firewalled synthesis context
+  (behavior) plus the previous attempt's failing vectors — never the
+  original binary's path (FEA fails closed if it ever leaks). The agent
+  prints `{"rebuildPath": "..."}` on stdout; FEA scores each attempt with
+  the parity oracle and stops at the target score or max attempts.
+  FEA becomes the **reward function**; the agent does the writing.
+- Agent protocol is just stdin/stdout JSON — wire anything: an LLM CLI
+  wrapper, a synthesis script, a build hook. `examples/evolve-agent/`
+  shows the protocol with a scripted mock.
+
+## What v0.8 was
 
 What changed. v0.8 answers the question every rebuild iteration asks:
 
@@ -160,11 +176,12 @@ MCP surface is now 13 tools.
 - ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
 - ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
 
-## What's next (v0.9)
+## What's next (v1.0)
 
-Emulator-backed APK harness (needs the Android SDK on the machine),
-`fea promote` (accept a rebuild's new behavior as the expected), and the
-actual npm publish run (`docs/PUBLISH.md` — needs your `npm login`).
+`fea twin publish` (public registry of verified twins), the emulator-backed
+APK harness (needs the Android SDK on the machine), `fea promote` (accept a
+rebuild's new behavior as expected), and the actual npm publish run
+(`docs/PUBLISH.md` — needs your `npm login`).
 
 ## Docs
 

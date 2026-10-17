@@ -43,7 +43,7 @@ export class ReaReader {
       const [command, ...args] = opts.command ?? ["rea", "mcp"];
       transport = new StdioClientTransport({ command, args });
     }
-    const client = new Client({ name: "fea-rea-reader", version: "0.8.0" });
+    const client = new Client({ name: "fea-rea-reader", version: "0.9.0" });
     await client.connect(transport);
     return new ReaReader(
       async () => {

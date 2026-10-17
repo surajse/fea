@@ -14,7 +14,8 @@ import {
 import {
   backendName,
   dockerAvailable,
-  probeAndroidTools
+  probeAndroidTools,
+  SpawnBackend
 } from "@fea/sandbox";
 import {
   ReaReader,
@@ -34,12 +35,17 @@ import {
   verifyProvenanceChain,
   type SynthesisContext
 } from "@fea/cleanroom";
-import { generateVectors, runParity, type ParityReport } from "@fea/oracle";
+import {
+  generateVectors,
+  runParity,
+  type FailingVector,
+  type ParityReport
+} from "@fea/oracle";
 import { PolicyEngine } from "@fea/policy";
 import { FeaStore } from "./store.js";
 import { dirname } from "node:path";
 
-export const FEA_VERSION = "0.8.0";
+export const FEA_VERSION = "0.9.0";
 
 /** Human-readable summary of a staged tool call (for approval prompts). */
 function describeToolCall(tool: string, args: Record<string, unknown>): string {
@@ -237,6 +243,39 @@ export interface VectorSetDiff {
   removed: VectorDiffEntry[];
   changed: VectorDiffEntry[];
   unchanged: number;
+}
+
+/** What the evolve agent sees: behavior only, never the original binary. */
+export interface EvolveAgentRequest {
+  attempt: number;
+  maxAttempts: number;
+  targetScore: number;
+  lastScore: number | null;
+  synthesisContext: SynthesisContext;
+  failingVectors: FailingVector[];
+}
+
+export interface EvolveAttempt {
+  attempt: number;
+  rebuildPath: string;
+  score: number;
+  failingVectorCount: number;
+  durationMs: number;
+  agentNotes?: string;
+}
+
+export interface EvolutionReport {
+  id: string;
+  specId: string;
+  vectorSetId: string;
+  targetScore: number;
+  converged: boolean;
+  bestScore: number;
+  bestRebuildPath: string;
+  bestReportId: string;
+  attempts: EvolveAttempt[];
+  startedAt: string;
+  finishedAt: string;
 }
 
 /** Identity of a vector for diffing: what was asked, not what came back. */
@@ -591,6 +630,129 @@ export class FeaCore {
       for (const vb of listB) added.push({ status: "added", matchKey: key, idB: vb.id });
     }
     return { setA: setA.id, setB: setB.id, added, removed, changed, unchanged };
+  }
+
+  /**
+   * The self-rebuilding loop. An external agent command is invoked once per
+   * attempt with ONLY the firewalled synthesis context (behavior, never the
+   * original binary) plus the previous attempt's failing vectors. The agent
+   * prints {"rebuildPath": "..."} on stdout (logs go to stderr). FEA scores
+   * each rebuild with the parity oracle until the target score is reached
+   * or attempts run out. FEA is the reward function; the agent does the
+   * writing.
+   */
+  async evolve(
+    input: {
+      specId: string;
+      vectorSetId: string;
+      agentCommand: string;
+      agentArgs?: string[];
+      targetScore?: number;
+      maxAttempts?: number;
+      attemptTimeoutMs?: number;
+      packs?: string[];
+    },
+    onEvent?: (e: { attempt: number; score: number; converged: boolean }) => void | Promise<void>
+  ): Promise<EvolutionReport> {
+    const targetScore = input.targetScore ?? 100;
+    const maxAttempts = input.maxAttempts ?? 5;
+    const timeoutMs = input.attemptTimeoutMs ?? 300_000;
+    const spec = this.store.load<BehaviorSpec>("specs", input.specId);
+    const target = this.store.load<TargetDescriptor>("targets", spec.target.id);
+    this.store.load<VectorSet>("vectorsets", input.vectorSetId);
+
+    const ctx = createSynthesisContext(spec);
+    // Defense in depth: fail closed if the original path ever leaks into the agent's view.
+    if (target.pathOrUrl && JSON.stringify(ctx).includes(target.pathOrUrl)) {
+      throw new Error("firewall breach: original target path leaked into synthesis context");
+    }
+
+    const startedAt = new Date().toISOString();
+    const attempts: EvolveAttempt[] = [];
+    let failingVectors: FailingVector[] = [];
+    let lastScore: number | null = null;
+    let best: { score: number; rebuildPath: string; reportId: string } | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const request: EvolveAgentRequest = {
+        attempt,
+        maxAttempts,
+        targetScore,
+        lastScore,
+        synthesisContext: ctx,
+        failingVectors
+      };
+      const attemptStarted = Date.now();
+      const res = await new SpawnBackend().run(input.agentCommand, input.agentArgs ?? [], {
+        stdin: JSON.stringify(request),
+        timeoutMs,
+        maxOutputBytes: 1_000_000
+      });
+      if (res.timedOut) {
+        throw new Error(`evolve agent timed out after ${timeoutMs}ms (attempt ${attempt})`);
+      }
+      if (res.exitCode !== 0) {
+        throw new Error(
+          `evolve agent exited ${res.exitCode} (attempt ${attempt}): ${res.stderr.slice(0, 500)}`
+        );
+      }
+      let parsed: { rebuildPath?: string; rebuildUrl?: string; notes?: string };
+      try {
+        parsed = JSON.parse(res.stdout) as typeof parsed;
+      } catch {
+        throw new Error(
+          `evolve agent must print JSON {"rebuildPath": "..."} on stdout (attempt ${attempt}); got: ${res.stdout.slice(0, 200)}`
+        );
+      }
+      if (!parsed.rebuildPath && !parsed.rebuildUrl) {
+        throw new Error(`evolve agent did not return rebuildPath or rebuildUrl (attempt ${attempt})`);
+      }
+      const { report } = await this.verifyParity({
+        originalTargetId: target.id,
+        rebuildPath: parsed.rebuildPath,
+        rebuildUrl: parsed.rebuildUrl,
+        vectorSetId: input.vectorSetId,
+        packs: input.packs
+      });
+      failingVectors = report.failingVectors;
+      lastScore = report.score;
+      attempts.push({
+        attempt,
+        rebuildPath: parsed.rebuildPath ?? parsed.rebuildUrl ?? "",
+        score: report.score,
+        failingVectorCount: failingVectors.length,
+        durationMs: Date.now() - attemptStarted,
+        agentNotes: parsed.notes
+      });
+      if (!best || report.score > best.score) {
+        best = { score: report.score, rebuildPath: parsed.rebuildPath ?? parsed.rebuildUrl ?? "", reportId: report.id };
+      }
+      const converged = report.score >= targetScore;
+      await onEvent?.({ attempt, score: report.score, converged });
+      if (converged) break;
+    }
+
+    const evolution: EvolutionReport = {
+      id: `evo_${randomUUID().slice(0, 8)}`,
+      specId: spec.id,
+      vectorSetId: input.vectorSetId,
+      targetScore,
+      converged: (best?.score ?? 0) >= targetScore,
+      bestScore: best?.score ?? 0,
+      bestRebuildPath: best?.rebuildPath ?? "",
+      bestReportId: best?.reportId ?? "",
+      attempts,
+      startedAt,
+      finishedAt: new Date().toISOString()
+    };
+    this.store.save("evolutions", evolution.id, evolution);
+    this.prov.append("evolve", {
+      evolution: evolution.id,
+      converged: evolution.converged,
+      bestScore: evolution.bestScore,
+      attempts: attempts.length
+    });
+    return evolution;
   }
 
   /**

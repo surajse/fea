@@ -13,6 +13,10 @@ function print(data: unknown): void {
   console.log(JSON.stringify(data, null, 2));
 }
 
+function collect(val: string, prev: string[]): string[] {
+  return [...prev, val];
+}
+
 interface GlobalOpts {
   store: string;
   policy?: string;
@@ -88,7 +92,7 @@ const program = new Command();
 program
   .name("fea")
   .description("Forward Engineer Anything — verified reimplementation loop")
-  .version("0.8.0")
+  .version("0.9.0")
   .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"))
   .option("--policy <file>", "policy file (allow/ask/deny per tool)");
 
@@ -388,6 +392,66 @@ program
     const g = globals(cmd);
     print(coreFor({ store: g.store }).diffVectorSets({ a: opts.a, b: opts.b }));
   });
+
+program
+  .command("evolve")
+  .description("Drive an agent to reimplement the target until parity converges (the self-rebuilding loop)")
+  .requiredOption("--spec <id>", "behavior spec id")
+  .requiredOption("--vectorset <id>", "vector set id to verify against")
+  .requiredOption("--agent-cmd <bin>", "agent binary (no shell)")
+  .option("--agent-arg <arg>", "agent argument (repeatable)", collect, [])
+  .option("--target-score <n>", "stop when score reaches n", "100")
+  .option("--max-attempts <n>", "give up after n attempts", "5")
+  .option("--attempt-timeout-ms <n>", "kill the agent past n ms per attempt", "300000")
+  .option("--packs <list>", "normalizer packs, comma-separated")
+  .option("--yes", "pre-approve (required when policy says 'ask')")
+  .action(
+    async (
+      opts: {
+        spec: string;
+        vectorset: string;
+        agentCmd: string;
+        agentArg: string[];
+        targetScore: string;
+        maxAttempts: string;
+        attemptTimeoutMs: string;
+        packs?: string;
+        yes?: boolean;
+      },
+      cmd
+    ) => {
+      const g = globals(cmd);
+      const policy = PolicyEngine.loadFor(g.store, g.policy);
+      const decision = policy.check("fea_verify_parity");
+      if (decision === "deny") {
+        console.error(`fea_verify_parity is denied by policy (${policy.source})`);
+        process.exit(1);
+      }
+      if (decision === "ask" && !opts.yes) {
+        console.error("fea evolve needs --yes: approvals don't work in an evolve loop");
+        process.exit(1);
+      }
+      const core = coreFor({ store: g.store });
+      const evolution = await core.evolve(
+        {
+          specId: opts.spec,
+          vectorSetId: opts.vectorset,
+          agentCommand: opts.agentCmd,
+          agentArgs: opts.agentArg,
+          targetScore: parseFloat(opts.targetScore),
+          maxAttempts: parseInt(opts.maxAttempts, 10),
+          attemptTimeoutMs: parseInt(opts.attemptTimeoutMs, 10),
+          packs: opts.packs ? opts.packs.split(",").map((p) => p.trim()).filter(Boolean) : undefined
+        },
+        (e) => {
+          console.error(
+            `attempt #${e.attempt} — score ${e.score} [${e.converged ? "CONVERGED" : "retrying"}]`
+          );
+        }
+      );
+      print(evolution);
+    }
+  );
 
 program
   .command("fuzz")
