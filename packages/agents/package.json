@@ -1,0 +1,37 @@
+{
+  "description": "Agent presets for FEA evolve: prompt rendering + model-CLI wrappers",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "license": "MIT",
+  "main": "./dist/src/index.js",
+  "name": "@fea/agents",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "types": "./dist/src/index.d.ts",
+  "version": "1.1.0",
+  "type": "module",
+  "author": "surajse",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surajse/fea.git"
+  },
+  "homepage": "https://github.com/surajse/fea#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "reverse-engineering",
+    "clean-room",
+    "testing",
+    "ai-agents"
+  ],
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@fea/sandbox": "workspace:*"
+  }
+}

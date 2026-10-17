@@ -38,15 +38,17 @@ import {
 import {
   generateVectors,
   runParity,
+  runVectorOutput,
   type FailingVector,
   type ParityReport
 } from "@fea/oracle";
 import { PolicyEngine } from "@fea/policy";
 import { buildTwinEntry, FileTwinIndex, type TwinEntry } from "@fea/twins";
+import { resolveAgentPreset } from "@fea/agents";
 import { FeaStore } from "./store.js";
 import { dirname } from "node:path";
 
-export const FEA_VERSION = "1.0.0";
+export const FEA_VERSION = "1.1.0";
 
 /** Human-readable summary of a staged tool call (for approval prompts). */
 function describeToolCall(tool: string, args: Record<string, unknown>): string {
@@ -598,6 +600,62 @@ export class FeaCore {
   }
 
   /**
+   * Promote a rebuild's current behavior as the new expected: run the rebuild
+   * on a vector set's inputs and store a NEW vector set with its outputs.
+   * Use after an intentional behavior change (new feature) so verify reflects
+   * the new contract instead of failing on stale expectations.
+   */
+  async promote(input: {
+    targetId: string;
+    vectorSetId: string;
+    rebuildPath?: string;
+    rebuildUrl?: string;
+    timeoutMs?: number;
+  }): Promise<VectorSet> {
+    const target = this.store.load<TargetDescriptor>("targets", input.targetId);
+    const set = this.store.load<VectorSet>("vectorsets", input.vectorSetId);
+    const rebuild =
+      target.kind === "http-api" ? input.rebuildUrl : input.rebuildPath;
+    if (!rebuild) {
+      throw new Error(
+        target.kind === "http-api"
+          ? "promote on http-api targets needs rebuildUrl"
+          : "promote on cli/native targets needs rebuildPath"
+      );
+    }
+    if (target.kind === "apk") {
+      throw new Error("apk promote needs a launched app harness — not supported yet");
+    }
+    const timeoutMs = input.timeoutMs ?? 10_000;
+    const vectors: Vector[] = [];
+    for (const v of set.vectors) {
+      const output = await runVectorOutput(rebuild, v, timeoutMs);
+      vectors.push({
+        ...v,
+        id: `vec_${randomUUID().slice(0, 8)}`,
+        output,
+        recordedAt: new Date().toISOString(),
+        seed: undefined
+      });
+    }
+    const newSet: VectorSet = {
+      id: `vs_${randomUUID().slice(0, 8)}`,
+      targetId: target.id,
+      vectors,
+      createdAt: new Date().toISOString()
+    };
+    this.store.save("vectorsets", newSet.id, newSet);
+    this.prov.append("promote", {
+      from: input.vectorSetId,
+      to: newSet.id,
+      rebuild,
+      vectors: newSet.vectors.length,
+      targetKind: target.kind
+    });
+    return newSet;
+  }
+
+  /**
    * Pin a parity report as the baseline for a (target, vector set) pair.
    * Later verifyParity calls report the delta against it.
    */
@@ -677,8 +735,12 @@ export class FeaCore {
     input: {
       specId: string;
       vectorSetId: string;
-      agentCommand: string;
+      agentCommand?: string;
       agentArgs?: string[];
+      /** preset name (claude-code | codex) — alternative to agentCommand */
+      agentPreset?: string;
+      /** file extension for preset-generated rebuilds */
+      agentOutExt?: string;
       targetScore?: number;
       maxAttempts?: number;
       attemptTimeoutMs?: number;
@@ -692,6 +754,23 @@ export class FeaCore {
     const spec = this.store.load<BehaviorSpec>("specs", input.specId);
     const target = this.store.load<TargetDescriptor>("targets", spec.target.id);
     this.store.load<VectorSet>("vectorsets", input.vectorSetId);
+
+    let agentCommand = input.agentCommand;
+    let agentArgs = input.agentArgs ?? [];
+    if (input.agentPreset) {
+      if (agentCommand) {
+        throw new Error("evolve: use agentPreset or agentCommand, not both");
+      }
+      const resolved = resolveAgentPreset(input.agentPreset, {
+        outExt: input.agentOutExt ?? "js",
+        outDir: join(this.store.dir, "evolve")
+      });
+      agentCommand = resolved.command;
+      agentArgs = resolved.args;
+    }
+    if (!agentCommand) {
+      throw new Error("evolve needs agentCommand (+agentArgs) or agentPreset");
+    }
 
     const ctx = createSynthesisContext(spec);
     // Defense in depth: fail closed if the original path ever leaks into the agent's view.
@@ -715,7 +794,7 @@ export class FeaCore {
         failingVectors
       };
       const attemptStarted = Date.now();
-      const res = await new SpawnBackend().run(input.agentCommand, input.agentArgs ?? [], {
+      const res = await new SpawnBackend().run(agentCommand, agentArgs, {
         stdin: JSON.stringify(request),
         timeoutMs,
         maxOutputBytes: 1_000_000

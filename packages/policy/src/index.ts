@@ -23,7 +23,8 @@ export const RECOMMENDED_POLICY: PolicyConfig = {
     fea_capture_behavior: "ask",
     fea_verify_parity: "ask",
     fea_read: "ask",
-    fea_twin_publish: "ask"
+    fea_twin_publish: "ask",
+    fea_promote: "ask"
   }
 };
 

@@ -160,7 +160,7 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
   it("doctor reports sandbox backend and REA status", async () => {
     const core = await makeCore();
     const d = await core.doctor();
-    expect(d.fea).toBe("1.0.0");
+    expect(d.fea).toBe("1.1.0");
     expect(d.sandboxBackend).toBe("spawn");
     // reaInstalled depends on the machine (real REA may be installed) —
     // assert shape, not value.
@@ -660,5 +660,102 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
     // no external assets
     expect(html).not.toContain("http://");
     expect(html).not.toContain("https://");
+  });
+});
+
+describe("v1.1 core: promote + agent presets", () => {
+  it("promote stores a new vector set with the rebuild's outputs", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    // intentional behavior change: the rebuild doubles instead of adding
+    const doubler = makeScript(
+      "#!/usr/bin/env node\nconsole.log(2 * Number(process.argv[2]) + 2 * Number(process.argv[3]));\n"
+    );
+    const { report: before } = await core.verifyParity({
+      originalTargetId: target.id,
+      rebuildPath: doubler,
+      vectorSetId
+    });
+    expect(before.score).toBe(0);
+
+    const newSet = await core.promote({ targetId: target.id, vectorSetId, rebuildPath: doubler });
+    expect(newSet.id).not.toBe(vectorSetId);
+    expect(newSet.vectors).toHaveLength(1);
+    // inputs replayed, outputs now the rebuild's (blessed) behavior
+    expect(newSet.vectors[0].input).toMatchObject({ kind: "cli", argv: ["2", "3"] });
+    expect(newSet.vectors[0].output).toMatchObject({ kind: "cli", stdout: "10\n" });
+  });
+
+  it("promote requires the right rebuild kind", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    await expect(core.promote({ targetId: target.id, vectorSetId })).rejects.toThrow(/rebuildPath/);
+  });
+
+  it("evolve accepts an agent preset (fake codex shim)", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+
+    // fake `codex` on PATH: ignores the prompt, prints the correct program
+    const binDir = mkdtempSync(join(tmpdir(), "fea-fakebin-"));
+    const shim = join(binDir, "codex");
+    writeFileSync(
+      shim,
+      `#!/bin/sh\n# consume stdin (the prompt), print canned code\ncat > /dev/null\ncat ${JSON.stringify(join(binDir, "canned.js"))}\n`
+    );
+    writeFileSync(join(binDir, "canned.js"), ADDER);
+    chmodSync(shim, 0o755);
+    const oldPath = process.env.PATH ?? "";
+    process.env.PATH = `${binDir}:${oldPath}`;
+    try {
+      const evo = await core.evolve({
+        specId: spec.id,
+        vectorSetId,
+        agentPreset: "codex",
+        maxAttempts: 2,
+        attemptTimeoutMs: 30_000
+      });
+      expect(evo.converged).toBe(true);
+      expect(evo.bestScore).toBe(100);
+      expect(evo.attempts).toHaveLength(1);
+    } finally {
+      process.env.PATH = oldPath;
+    }
+  });
+
+  it("evolve rejects unknown presets and preset+command combos", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const spec = core.extractSpec({ vectorSetId });
+    await expect(
+      core.evolve({ specId: spec.id, vectorSetId, agentPreset: "gpt-9", maxAttempts: 1 })
+    ).rejects.toThrow(/unknown agent preset/);
+    await expect(
+      core.evolve({ specId: spec.id, vectorSetId, agentPreset: "codex", agentCommand: "node", maxAttempts: 1 })
+    ).rejects.toThrow(/not both/);
+    await expect(
+      core.evolve({ specId: spec.id, vectorSetId, maxAttempts: 1 })
+    ).rejects.toThrow(/agentCommand \(\+agentArgs\) or agentPreset/);
   });
 });

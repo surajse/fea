@@ -203,6 +203,19 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
   );
 
   server.tool(
+    "fea_promote",
+    "Bless a rebuild's behavior as the new expected: runs the rebuild on a vector set's inputs and stores a NEW vector set with its outputs. Use after an intentional behavior change so verify reflects the new contract.",
+    {
+      targetId: z.string(),
+      vectorSetId: z.string(),
+      rebuildPath: z.string().optional(),
+      rebuildUrl: z.string().optional(),
+      timeoutMs: z.number().optional()
+    },
+    (args) => gated("fea_promote", args, () => core.promote(args))
+  );
+
+  server.tool(
     "fea_extract_spec",
     "Build a validated BehaviorSpec (v1.0) from a captured vector set, optionally with reader notes as evidence.",
     { vectorSetId: z.string(), notesId: z.string().optional() },

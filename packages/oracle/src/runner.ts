@@ -92,6 +92,27 @@ export function canonicalHeaders(headers: Record<string, string>): string {
 }
 
 /**
+ * Run a single vector's input against a rebuild and return its raw output.
+ * Used by `fea promote` (bless the rebuild's behavior as the new expected).
+ * No normalization — promote records what the rebuild actually did.
+ */
+export async function runVectorOutput(
+  rebuildPathOrUrl: string,
+  vector: Vector,
+  timeoutMs = 10_000
+): Promise<Vector["output"]> {
+  if (vector.input.kind === "cli") {
+    const r = await runCommand(rebuildPathOrUrl, vector.input.argv, {
+      stdin: vector.input.stdin,
+      timeoutMs
+    });
+    return { kind: "cli", stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode };
+  }
+  const r = await replayHttp(rebuildPathOrUrl, vector.input, timeoutMs);
+  return { kind: "http", status: r.status, headers: r.headers, body: r.body };
+}
+
+/**
  * Differential parity: run original and rebuild on every vector, compare
  * normalized outputs. Supports CLI/native vectors (binary paths) and HTTP
  * vectors (base URLs). Mixed sets are allowed; each kind needs its rebuild

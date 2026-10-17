@@ -92,7 +92,7 @@ const program = new Command();
 program
   .name("fea")
   .description("Forward Engineer Anything — verified reimplementation loop")
-  .version("1.0.0")
+  .version("1.1.0")
   .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"))
   .option("--policy <file>", "policy file (allow/ask/deny per tool)");
 
@@ -398,8 +398,10 @@ program
   .description("Drive an agent to reimplement the target until parity converges (the self-rebuilding loop)")
   .requiredOption("--spec <id>", "behavior spec id")
   .requiredOption("--vectorset <id>", "vector set id to verify against")
-  .requiredOption("--agent-cmd <bin>", "agent binary (no shell)")
+  .option("--agent-cmd <bin>", "agent binary (no shell)")
   .option("--agent-arg <arg>", "agent argument (repeatable)", collect, [])
+  .option("--agent-preset <name>", "model preset: claude-code | codex (alternative to --agent-cmd)")
+  .option("--agent-out-ext <ext>", "file extension for preset-generated rebuilds", "js")
   .option("--target-score <n>", "stop when score reaches n", "100")
   .option("--max-attempts <n>", "give up after n attempts", "5")
   .option("--attempt-timeout-ms <n>", "kill the agent past n ms per attempt", "300000")
@@ -410,8 +412,10 @@ program
       opts: {
         spec: string;
         vectorset: string;
-        agentCmd: string;
+        agentCmd?: string;
         agentArg: string[];
+        agentPreset?: string;
+        agentOutExt: string;
         targetScore: string;
         maxAttempts: string;
         attemptTimeoutMs: string;
@@ -431,6 +435,14 @@ program
         console.error("fea evolve needs --yes: approvals don't work in an evolve loop");
         process.exit(1);
       }
+      if (!opts.agentPreset && !opts.agentCmd) {
+        console.error("fea evolve needs --agent-preset <claude-code|codex> or --agent-cmd <bin>");
+        process.exit(1);
+      }
+      if (opts.agentPreset && opts.agentCmd) {
+        console.error("use --agent-preset or --agent-cmd, not both");
+        process.exit(1);
+      }
       const core = coreFor({ store: g.store });
       const evolution = await core.evolve(
         {
@@ -438,6 +450,8 @@ program
           vectorSetId: opts.vectorset,
           agentCommand: opts.agentCmd,
           agentArgs: opts.agentArg,
+          agentPreset: opts.agentPreset,
+          agentOutExt: opts.agentOutExt,
           targetScore: parseFloat(opts.targetScore),
           maxAttempts: parseInt(opts.maxAttempts, 10),
           attemptTimeoutMs: parseInt(opts.attemptTimeoutMs, 10),
@@ -636,6 +650,38 @@ twinCmd
           outDir: opts.outDir,
           indexPath: opts.index
         })
+      );
+    }
+  );
+
+program
+  .command("promote")
+  .description("Bless a rebuild's behavior as the new expected: stores a NEW vector set with the rebuild's outputs (for intentional behavior changes)")
+  .requiredOption("--target <id>", "original target id")
+  .requiredOption("--vectorset <id>", "vector set id whose inputs to replay")
+  .option("--rebuild <path>", "rebuild binary path (cli/native targets)")
+  .option("--rebuild-url <url>", "rebuild base URL (http-api targets)")
+  .option("--yes", "pre-approve (required when policy says 'ask')")
+  .action(
+    async (
+      opts: { target: string; vectorset: string; rebuild?: string; rebuildUrl?: string; yes?: boolean },
+      cmd
+    ) => {
+      const g = globals(cmd);
+      print(
+        await gatedCli(
+          "fea_promote",
+          { targetId: opts.target, vectorSetId: opts.vectorset },
+          g,
+          opts,
+          () =>
+            coreFor({ store: g.store }).promote({
+              targetId: opts.target,
+              vectorSetId: opts.vectorset,
+              rebuildPath: opts.rebuild,
+              rebuildUrl: opts.rebuildUrl
+            })
+        )
       );
     }
   );

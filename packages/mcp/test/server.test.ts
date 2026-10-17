@@ -60,7 +60,8 @@ describe("FEA MCP server", () => {
         "fea_diff_vectorsets",
         "fea_twin_publish",
         "fea_twin_search",
-        "fea_twin_get"
+        "fea_twin_get",
+        "fea_promote"
       ].sort()
     );
     await client.close();
@@ -175,7 +176,7 @@ describe("FEA MCP server", () => {
     expect(pack.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
 
     const doctor = (await call(client, "fea_doctor", {})) as { fea: string };
-    expect(doctor.fea).toBe("1.0.0");
+    expect(doctor.fea).toBe("1.1.0");
 
     await client.close();
   });

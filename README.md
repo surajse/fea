@@ -20,6 +20,26 @@ ingest → capture → spec → synthesize → verify → export
 Install (once published): `npm i -g fea-agents` — the `fea` binary. From
 source: `pnpm install && pnpm build`.
 
+## What v1.1 is
+
+No more wrapper scripts. v1.1 makes the self-rebuilding loop one command:
+
+- **Agent presets** (new `@fea/agents` package) — `fea evolve --agent-preset
+  codex` (or `claude-code`) instead of `--agent-cmd` + a hand-written
+  wrapper. The preset ships a prompt renderer (synthesis context + failing
+  vectors → a clean-room prompt: behavior only, output code only) and a
+  wrapper that invokes the model CLI (`codex exec` / `claude -p`), writes the
+  code to `<store>/evolve/`, and prints `{"rebuildPath"}`. `--agent-out-ext`
+  picks the file extension. Custom agents still work via `--agent-cmd`.
+  Model CLIs must be installed and authenticated on the machine running
+  evolve — FEA can't log you in.
+- **`fea promote`** — bless a rebuild's new behavior as expected. After an
+  *intentional* behavior change (new feature), the old vectors are stale:
+  promote replays the vector set's inputs against the rebuild and stores a
+  NEW vector set with its outputs. The new set *is* the rebuild's contract —
+  verify passes against it. MCP tool: `fea_promote` (19 total),
+  policy-gated as `ask` (it executes the rebuild).
+
 ## What v1.0 is
 
 The Twin Era. v1.0 turns FEA from a tool into a movement:
@@ -195,13 +215,12 @@ MCP surface is now 13 tools.
 - ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
 - ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
 
-## What's next (v1.1)
+## What's next (v1.2)
 
-Agent presets for evolve (`--agent claude-code` / `codex` — no wrapper
-script), `fea promote` (bless a rebuild's new behavior as expected),
-the GitHub-backed `fea-twins` registry index (needs your go-ahead to create
-the repo), and the actual npm publish run (`docs/PUBLISH.md` — needs your
-`npm login`).
+The GitHub-backed `fea-twins` registry index (needs your go-ahead to create
+the repo), the actual npm publish run (`docs/PUBLISH.md` — needs your
+`npm login`), and the emulator-backed APK harness (honestly needs an
+Android SDK machine).
 
 ## Docs
 

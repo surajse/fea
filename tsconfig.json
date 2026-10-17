@@ -33,6 +33,9 @@
     },
     {
       "path": "./packages/twins"
+    },
+    {
+      "path": "./packages/agents"
     }
   ]
 }
