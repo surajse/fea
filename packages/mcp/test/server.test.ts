@@ -38,7 +38,7 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 }
 
 describe("FEA MCP server", () => {
-  it("exposes 14 tools", async () => {
+  it("exposes 15 tools", async () => {
     const client = await connectedClient(mkdtempSync(join(tmpdir(), "fea-")));
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
@@ -56,7 +56,8 @@ describe("FEA MCP server", () => {
         "fea_approve",
         "fea_fuzz",
         "fea_report",
-        "fea_verify_pack"
+        "fea_verify_pack",
+        "fea_diff_vectorsets"
       ].sort()
     );
     await client.close();
@@ -171,7 +172,7 @@ describe("FEA MCP server", () => {
     expect(pack.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
 
     const doctor = (await call(client, "fea_doctor", {})) as { fea: string };
-    expect(doctor.fea).toBe("0.7.0");
+    expect(doctor.fea).toBe("0.8.0");
 
     await client.close();
   });

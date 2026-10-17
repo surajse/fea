@@ -160,7 +160,7 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
   it("doctor reports sandbox backend and REA status", async () => {
     const core = await makeCore();
     const d = await core.doctor();
-    expect(d.fea).toBe("0.7.0");
+    expect(d.fea).toBe("0.8.0");
     expect(d.sandboxBackend).toBe("spawn");
     // reaInstalled depends on the machine (real REA may be installed) —
     // assert shape, not value.
@@ -353,6 +353,57 @@ describe("v0.2 core: native kind + reader notes + failUnder", () => {
     expect(xml).toContain(`failures="${report.failed}"`);
     expect(xml).toContain("<failure");
     expect(xml).toContain("parity score");
+  });
+
+  it("diffVectorSets finds added, removed, and changed vectors", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId: setA } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const { vectorSetId: setB } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }, { argv: ["4", "5"] }]
+    });
+
+    const d1 = core.diffVectorSets({ a: setA, b: setB });
+    expect(d1.unchanged).toBe(1);
+    expect(d1.added).toHaveLength(1);
+    expect(d1.removed).toHaveLength(0);
+    expect(d1.changed).toHaveLength(0);
+
+    const d2 = core.diffVectorSets({ a: setB, b: setA });
+    expect(d2.removed).toHaveLength(1);
+    expect(d2.added).toHaveLength(0);
+
+    // same input, different behavior → changed
+    const variant = makeScript("#!/usr/bin/env node\nconsole.log('wrong');\n");
+    const targetV = core.ingestTarget({ pathOrUrl: variant, kind: "cli", iHaveRights: true });
+    const { vectorSetId: setC } = await core.captureBehavior({
+      targetId: targetV.id,
+      plans: [{ argv: ["2", "3"] }]
+    });
+    const d3 = core.diffVectorSets({ a: setA, b: setC });
+    expect(d3.unchanged).toBe(0);
+    expect(d3.changed).toHaveLength(1);
+    expect(d3.changed[0].changes).toContain("output.stdout");
+  });
+
+  it("diffVectorSets treats identical sets as fully unchanged", async () => {
+    const core = await makeCore();
+    const adder = makeScript(ADDER);
+    const target = core.ingestTarget({ pathOrUrl: adder, kind: "cli", iHaveRights: true });
+    const { vectorSetId } = await core.captureBehavior({
+      targetId: target.id,
+      plans: [{ argv: ["2", "3"] }, { argv: ["4", "5"] }]
+    });
+    const d = core.diffVectorSets({ a: vectorSetId, b: vectorSetId });
+    expect(d.unchanged).toBe(2);
+    expect(d.added).toHaveLength(0);
+    expect(d.removed).toHaveLength(0);
+    expect(d.changed).toHaveLength(0);
   });
 
   it("reportHtml renders a self-contained report with escaping", async () => {

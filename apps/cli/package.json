@@ -17,7 +17,7 @@
     "test": "vitest run",
     "prepack": "cp ../../README.md ../../LICENSE ./ 2>/dev/null; true"
   },
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "author": "surajse",
   "repository": {

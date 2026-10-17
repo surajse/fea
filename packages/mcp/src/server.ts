@@ -156,6 +156,16 @@ export function createFieaServer(storeDir: string): { server: McpServer; core: F
   );
 
   server.tool(
+    "fea_diff_vectorsets",
+    "Diff two vector sets: which vectors were added, removed, or changed (same input, different expectations/output).",
+    {
+      a: z.string().describe("First vector set id"),
+      b: z.string().describe("Second vector set id")
+    },
+    (args) => run(() => core.diffVectorSets(args))
+  );
+
+  server.tool(
     "fea_extract_spec",
     "Build a validated BehaviorSpec (v1.0) from a captured vector set, optionally with reader notes as evidence.",
     { vectorSetId: z.string(), notesId: z.string().optional() },

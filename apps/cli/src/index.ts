@@ -88,7 +88,7 @@ const program = new Command();
 program
   .name("fea")
   .description("Forward Engineer Anything — verified reimplementation loop")
-  .version("0.7.0")
+  .version("0.8.0")
   .option("--store <dir>", "FEA store directory", join(process.cwd(), ".fea"))
   .option("--policy <file>", "policy file (allow/ask/deny per tool)");
 
@@ -377,6 +377,16 @@ program
         reportId: opts.report
       })
     );
+  });
+
+program
+  .command("diff")
+  .description("Diff two vector sets: added / removed / changed vectors")
+  .requiredOption("--a <id>", "first vector set id")
+  .requiredOption("--b <id>", "second vector set id")
+  .action((opts: { a: string; b: string }, cmd) => {
+    const g = globals(cmd);
+    print(coreFor({ store: g.store }).diffVectorSets({ a: opts.a, b: opts.b }));
   });
 
 program

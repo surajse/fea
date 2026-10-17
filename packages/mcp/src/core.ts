@@ -39,7 +39,7 @@ import { PolicyEngine } from "@fea/policy";
 import { FeaStore } from "./store.js";
 import { dirname } from "node:path";
 
-export const FEA_VERSION = "0.7.0";
+export const FEA_VERSION = "0.8.0";
 
 /** Human-readable summary of a staged tool call (for approval prompts). */
 function describeToolCall(tool: string, args: Record<string, unknown>): string {
@@ -218,6 +218,70 @@ function baselineId(targetId: string, vectorSetId: string): string {
   return (
     "base_" + createHash("sha256").update(`${targetId}\n${vectorSetId}`).digest("hex").slice(0, 16)
   );
+}
+
+export interface VectorDiffEntry {
+  status: "added" | "removed" | "changed" | "unchanged";
+  /** stable match key (input identity), not the random vector id */
+  matchKey: string;
+  idA?: string;
+  idB?: string;
+  /** field paths that differ, e.g. ["output.stdout"] */
+  changes?: string[];
+}
+
+export interface VectorSetDiff {
+  setA: string;
+  setB: string;
+  added: VectorDiffEntry[];
+  removed: VectorDiffEntry[];
+  changed: VectorDiffEntry[];
+  unchanged: number;
+}
+
+/** Identity of a vector for diffing: what was asked, not what came back. */
+function vectorMatchKey(v: Vector): string {
+  const input = v.input;
+  if (input.kind === "cli") {
+    return `cli|${input.argv.join("\u0000")}|${input.stdin ?? ""}`;
+  }
+  const hdrs: Record<string, string> = input.headers ?? {};
+  const headers = Object.keys(hdrs)
+    .sort()
+    .map((k) => `${k}=${hdrs[k]}`)
+    .join("&");
+  return `http|${input.method}|${input.url}|${headers}|${input.body ?? ""}`;
+}
+
+/** Deep field diff, dotted paths; id/recordedAt/seed are metadata, not behavior. */
+function diffVectorFields(a: Vector, b: Vector): string[] {
+  const changes: string[] = [];
+  const skip = new Set(["id", "recordedAt", "seed"]);
+  const walk = (x: unknown, y: unknown, path: string): void => {
+    if (x === y) return;
+    if (
+      x === null ||
+      y === null ||
+      typeof x !== "object" ||
+      typeof y !== "object" ||
+      Array.isArray(x) !== Array.isArray(y)
+    ) {
+      changes.push(path || "(root)");
+      return;
+    }
+    const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
+    for (const k of [...keys].sort()) {
+      if (path === "" && skip.has(k)) continue;
+      walk(
+        (x as Record<string, unknown>)[k],
+        (y as Record<string, unknown>)[k],
+        path ? `${path}.${k}` : k
+      );
+    }
+  };
+  walk(a, b, "");
+  if (a.weight !== b.weight && !changes.includes("weight")) changes.push("weight");
+  return changes.sort();
 }
 
 /**
@@ -481,6 +545,52 @@ export class FeaCore {
     this.store.save("baselines", baseline.id, baseline);
     this.prov.append("pin", { baseline: baseline.id, score: baseline.score });
     return baseline;
+  }
+
+  /**
+   * Diff two vector sets: which vectors were added, removed, or changed
+   * (same input, different expectations/output), matched by input identity
+   * so independently captured sets still line up.
+   */
+  diffVectorSets(input: { a: string; b: string }): VectorSetDiff {
+    const setA = this.store.load<VectorSet>("vectorsets", input.a);
+    const setB = this.store.load<VectorSet>("vectorsets", input.b);
+    const group = (vs: Vector[]): Map<string, Vector[]> => {
+      const m = new Map<string, Vector[]>();
+      for (const v of vs) {
+        const k = vectorMatchKey(v);
+        const arr = m.get(k) ?? [];
+        arr.push(v);
+        m.set(k, arr);
+      }
+      return m;
+    };
+    const ga = group(setA.vectors);
+    const gb = group(setB.vectors);
+    const added: VectorDiffEntry[] = [];
+    const removed: VectorDiffEntry[] = [];
+    const changed: VectorDiffEntry[] = [];
+    let unchanged = 0;
+    for (const [key, listA] of ga) {
+      const listB = gb.get(key) ?? [];
+      const n = Math.max(listA.length, listB.length);
+      for (let i = 0; i < n; i++) {
+        const va = listA[i];
+        const vb = listB[i];
+        if (va && vb) {
+          const changes = diffVectorFields(va, vb);
+          if (changes.length === 0) unchanged++;
+          else changed.push({ status: "changed", matchKey: key, idA: va.id, idB: vb.id, changes });
+        } else if (va) {
+          removed.push({ status: "removed", matchKey: key, idA: va.id });
+        }
+      }
+      gb.delete(key);
+    }
+    for (const [key, listB] of gb) {
+      for (const vb of listB) added.push({ status: "added", matchKey: key, idB: vb.id });
+    }
+    return { setA: setA.id, setB: setB.id, added, removed, changed, unchanged };
   }
 
   /**

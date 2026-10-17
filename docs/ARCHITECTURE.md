@@ -71,6 +71,14 @@ v0.5 adds `ansi` (terminal escape codes) and `json` (structural: whole-body
 JSON is parsed, keys sorted, re-stringified — reported as
 `json-canonicalize` so it stays auditable).
 
+## What changed (v0.8)
+
+`diffVectorSets` compares two vector sets and reports added / removed /
+changed vectors. Matching is by input identity (argv+stdin for CLI,
+method+url+headers+body for HTTP) rather than random ids, so two
+independent captures of the same target line up. Field diffs use dotted
+paths; `id`, `recordedAt`, and `seed` are metadata, not behavior.
+
 ## Continuous proof (v0.7)
 
 Iteration loop for the rebuild author:

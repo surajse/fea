@@ -20,7 +20,17 @@ ingest → capture → spec → synthesize → verify → export
 Install (once published): `npm i -g fea-agents` — the `fea` binary. From
 source: `pnpm install && pnpm build`.
 
-## What v0.7 is
+## What v0.8 is
+
+What changed. v0.8 answers the question every rebuild iteration asks:
+
+- **`fea diff --a <set> --b <set>`** (MCP: `fea_diff_vectorsets`, 15th
+  tool) — which vectors were added, removed, or changed between two
+  captures. Vectors are matched by *input identity* (what was asked),
+  so independently captured sets still line up; changed vectors list
+  the exact field paths that differ (`output.stdout`, `weight`, …).
+
+## What v0.7 was
 
 Continuous proof. v0.7 closes the iteration loop:
 
@@ -150,11 +160,11 @@ MCP surface is now 13 tools.
 - ✅ **Docker sandbox backend**: `FEA_SANDBOX=docker` (image via `FEA_DOCKER_IMAGE`); `fea doctor` reports backend + docker + REA status
 - ❌ Still no decompilers of its own · ❌ No license/DRM circumvention · ❌ Parity is behavioral, not a formal proof
 
-## What's next (v0.8)
+## What's next (v0.9)
 
 Emulator-backed APK harness (needs the Android SDK on the machine),
-`fea diff` between vector sets, and the actual npm publish run
-(`docs/PUBLISH.md` — needs your `npm login`).
+`fea promote` (accept a rebuild's new behavior as the expected), and the
+actual npm publish run (`docs/PUBLISH.md` — needs your `npm login`).
 
 ## Docs
 
